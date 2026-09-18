@@ -5,6 +5,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 from wekker.agenda.cache import AgendaCache
+from wekker.agenda.auth import AuthService, MockEntreeAuth
 from wekker.agenda.providers import MockAgendaProvider
 from wekker.agenda.sync import AgendaSyncService
 from wekker.alarm.core import AlarmClock
@@ -27,8 +28,9 @@ def _ctx(tmp_path):
     display = DisplayManager(driver, s, klok, cache)
     sync = AgendaSyncService(MockAgendaProvider(), cache, klok)
     button = ButtonController(core, lamp, display, klok, s)
+    auth = AuthService(klok, providers={"osiris": MockEntreeAuth(klok)})
     return AppContext(s, JsonStore(tmp_path / "s.json"), klok, core, display,
-                      cache, sync, button)
+                      cache, sync, button, auth)
 
 
 def _req(server, methode, pad, body=None):

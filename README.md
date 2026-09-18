@@ -51,9 +51,16 @@ prototype start en werkt volledig zonder.
   `display`, `agenda`), atomair JSON-schrijven met fsync, terugval op defaults
   bij corrupte opslag. Geen wachtwoorden/tokens; logs worden geredigeerd.
 - **Setup-API** (`src/wekker/api/server.py`): stdlib-HTTP (geen Flask nodig),
-  prototype-endpoints (status, settings, agenda-items, lamp, speaker-test,
-  alarm-dismiss, button-press) + mobiele setup-pagina op `/`.
-  De wekker blijft zelfstandig werken zonder telefoon.
+  endpoints voor status, settings, agenda, providers, (demo-)login-flow,
+  lamp, speaker-test, alarm-dismiss en button-press + mobiele setup-pagina
+  op `/`. De wekker blijft zelfstandig werken zonder telefoon.
+- **Touchscreen-GUI** (`src/wekker/gui/`): fullscreen 800x480 (tkinter),
+  hoofdscherm (tijd + alarm) en agendescherm met pijl-navigatie. Leest alle
+  data uit de bestaande core/settings/agenda — geen eigen logica.
+- **Agenda-providers** (`src/wekker/agenda/`): register met mock,
+  OSIRIS–ROC Aventus (demo-login ter voorbereiding op Entree) en
+  placeholders voor Somtoday/Magister/MyX. Auth-abstractie zonder
+  wachtwoorden.
 - **Tests**: unit + integratie (zie onder). Architectuur: `docs/architecture.md`.
 
 ## Vereisten
@@ -100,14 +107,35 @@ Wat simulatie wel/niet bewijst:
 - Niet: echte GPIO-timing en debouncing op hardware, LED-helderheid,
   geluidskwaliteit, stroomgedrag en Wi-Fi — daarvoor blijft de Pi nodig.
 
-## Setup-app (telefoon)
+## Setup-app (telefoon, laptop, tablet)
 
-Open `http://<pi-adres>:8080/` op de telefoon (lokaal: `http://127.0.0.1:8080/`).
-De pagina is mobielvriendelijk en kan: verbinding testen, status/tijd/volgend
-alarm bekijken, lamp aan/uit/testen, speaker testen, alarm afhandelen, button
-simuleren, instellingen bekijken/wijzigen, agenda-provider kiezen en
-mock-agendagegevens (met "gesimuleerd"-badge) bekijken. Lokaal prototype
-zonder inlog; niet zonder meer op een open netwerk zetten.
+De webinterface is bereikbaar via het lokale netwerk:
+
+```powershell
+# Alleen deze machine (default, veiligste):
+python -m wekker --port 8080
+# Lokaal netwerk (telefoon/tablet op dezelfde wifi):
+python -m wekker --host 0.0.0.0 --port 8080
+# open http://<ip-van-de-wekker>:8080/
+```
+
+Het dashboard toont status (SLEEPING/RINGING/DISMISSED), huidige tijd,
+volgend alarm, agenda-provider en verbinding. Verder: wektijd/speaker/lamp/
+lampduur instellen, lamp en speaker testen, alarm afhandelen, agenda-provider
+kiezen (mock of OSIRIS–ROC Aventus met demo-login), koppelstatus bekijken en
+agenda-syncstatus bekijken. Lokaal prototype zonder inlog; **niet** zonder
+meer op een open netwerk zetten (geen authenticatie/TLS in deze versie).
+
+## Touchscreen-GUI (800x480)
+
+```powershell
+python -m wekker gui            # fullscreen (Raspberry Pi)
+python -m wekker gui --window   # venster (development op laptop)
+```
+
+Hoofdscherm met grote tijd + alarmtijd en `<`/`>`-pijlen; linker pijl opent
+het agendescherm (OSIRIS-lessen of demo-data met badge). Escape sluit af,
+Alt+Tab blijft werken. Details: `docs/touch-gui.md`.
 
 ## Tests draaien
 
@@ -122,13 +150,14 @@ Verwachting: alle tests groen. Daarnaast:
 python -m compileall -q src tests
 ```
 
-## Wat nog mock is
+## Wat nog mock/demo is
 
 Display, speaker, lamp en button (`src/wekker/hardware/mock.py`). GPIO-pinnen
 liggen nergens vast; echte drivers worden pas geschreven als de onderdelen
-fysiek zijn gecontroleerd. De agenda-provider is een mock; er zijn **geen
-echte Magister/Osiris/MyX/Somtoday-koppelingen** — eerst per platform
-onderzoeken wat officieel kan (zie `docs/architecture.md`).
+fysiek zijn gecontroleerd. Agenda: alleen `mock` levert direct data; OSIRIS
+heeft een demo-login ter voorbereiding op Entree (zie
+`docs/osiris-entree.md`); Somtoday/Magister/MyX zijn placeholders. Er zijn
+**geen echte schoolkoppelingen en geen wachtwoorden** in dit project.
 
 ## Wat morgen op de Raspberry Pi moet gebeuren
 

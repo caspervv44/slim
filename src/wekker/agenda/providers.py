@@ -1,12 +1,14 @@
-"""Adapterinterface + mockprovider.
+"""Adapterinterface, provider-register en mockprovider.
 
-Echte koppelingen (Magister/Osiris/MyX/Somtoday) worden pas gebouwd na
-onderzoek per platform (officiële API, OAuth, scopes). Zie docs/architecture.
-Deze module definieert het contract waar elke adapter aan moet voldoen.
+Nieuwe schoolplatformen worden toegevoegd als (AuthProvider, AgendaProvider)
+paar in :data:`PROVIDER_INFOS` + een tak in :func:`create_provider`. De core,
+GUI en webinterface kennen alleen deze generieke interface — geen
+``if school == ...`` in algemene code.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Protocol
 
@@ -71,16 +73,26 @@ class MockAgendaProvider:
         return lessen
 
 
-def create_provider(name: str) -> AgendaProvider:
+def create_provider(name: str, auth_store=None) -> AgendaProvider:
     """Maak de adapter voor een gekozen schoolplatform.
 
-    Alleen "mock" heeft een werkende adapter. Andere platforms uit
-    ALLOWED_PROVIDERS zijn voorbereid maar geven een duidelijke
-    ProviderError ("nog niet beschikbaar") — nooit een stilzwijgende
-    lege agenda. Hier komt later OAuth/token-authenticatie per platform.
+    - ``"mock"``: altijd werkend, gesimuleerde gegevens.
+    - ``"osiris"``: ROC Aventus; vereist een koppeling (zie ``auth.py`` en
+      ``osiris.py``). Zonder koppeling mislukt syncen met een koppel-hint.
+    - overige namen uit ALLOWED_PROVIDERS: voorbereid maar nog niet
+      beschikbaar → duidelijke ProviderError, nooit een stilzwijgende lege
+      agenda.
     """
     if name == "mock":
         return MockAgendaProvider()
+    if name == "osiris":
+        from wekker.agenda.osiris import OsirisAgendaProvider
+
+        if auth_store is None:
+            raise ProviderError(
+                "Osiris vereist een koppeling; er is geen auth-store beschikbaar."
+            )
+        return OsirisAgendaProvider(auth_store)
     raise ProviderError(
         f"Agenda-provider {name!r} is nog niet beschikbaar; "
         "kies 'mock' voor gesimuleerde gegevens."
@@ -100,11 +112,94 @@ class _UnavailableProvider:
         )
 
 
-def create_provider_or_error(name: str) -> AgendaProvider:
+def create_provider_or_error(name: str, auth_store=None) -> AgendaProvider:
     """Adapter bouwen zonder ooit te crashen: onbekende platforms geven een
     plaatshouder waarvan elke sync eerlijk mislukt (cache wordt error/stale).
     """
     try:
-        return create_provider(name)
+        return create_provider(name, auth_store)
     except ProviderError:
         return _UnavailableProvider(name)
+
+
+def build_sync_provider(provider_id: str, cache, clock, auth_store=None):
+    """Maak een :class:`AgendaSyncService` voor een provider-id. Enige plek
+    waar settings-providernaam → adaptervertaling gebeurt (main, API, tests)."""
+    from wekker.agenda.sync import AgendaSyncService
+
+    return AgendaSyncService(create_provider_or_error(provider_id, auth_store),
+                             cache, clock)
+
+
+@dataclass(frozen=True)
+class ProviderInfo:
+    """Beschrijving van één schoolplatform voor GUI/webinterface.
+
+    Alleen generieke metadata — géén school-specifieke logica elders nodig.
+    ``auth`` is ``"none"`` of ``"entree-oidc"``; ``available`` geeft aan of
+    het platform in deze versie echt (of als demo) te koppelen is.
+    """
+
+    id: str
+    display_name: str
+    school: str
+    auth: str
+    available: bool
+    description: str
+
+
+PROVIDER_INFOS: dict[str, ProviderInfo] = {
+    "mock": ProviderInfo(
+        id="mock",
+        display_name="Mock (voorbeeldgegevens)",
+        school="—",
+        auth="none",
+        available=True,
+        description="Vaste voorbeeldlessen, altijd gesimuleerd.",
+    ),
+    "osiris": ProviderInfo(
+        id="osiris",
+        display_name="OSIRIS – ROC Aventus",
+        school="ROC Aventus",
+        auth="entree-oidc",
+        available=True,
+        description="Echte koppeling via Entree-login (in voorbereiding; nu demo).",
+    ),
+    "somtoday": ProviderInfo(
+        id="somtoday",
+        display_name="Somtoday",
+        school="—",
+        auth="entree-oidc",
+        available=False,
+        description="Later toe te voegen provider.",
+    ),
+    "magister": ProviderInfo(
+        id="magister",
+        display_name="Magister",
+        school="—",
+        auth="entree-oidc",
+        available=False,
+        description="Later toe te voegen provider.",
+    ),
+    "myx": ProviderInfo(
+        id="myx",
+        display_name="MyX",
+        school="—",
+        auth="entree-oidc",
+        available=False,
+        description="Later toe te voegen provider.",
+    ),
+}
+
+
+def list_providers() -> list[ProviderInfo]:
+    """Alle bekende platforms, in vaste volgorde voor de UI."""
+    return [PROVIDER_INFOS[k] for k in ("mock", "osiris", "somtoday", "magister", "myx")]
+
+
+def get_provider_info(provider_id: str) -> ProviderInfo:
+    """Metadata voor één platform; onbekende id geeft ValueError."""
+    try:
+        return PROVIDER_INFOS[provider_id]
+    except KeyError as exc:
+        raise ValueError(f"Onbekende provider: {provider_id!r}") from exc

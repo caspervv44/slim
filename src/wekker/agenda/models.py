@@ -5,6 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 
+#: Bronlabels waarvan de gegevens altijd gesimuleerd zijn. Echte
+#: platformdata krijgt later de kale providernaam als source (bv. "osiris").
+SIMULATED_SOURCES = frozenset({"mock", "osiris-demo"})
+
 
 @dataclass(frozen=True)
 class Lesson:
@@ -27,7 +31,7 @@ class Lesson:
             "location": self.room,
             "teacher": self.teacher,
             "source": self.source,
-            "simulated": self.source == "mock",
+            "simulated": self.source in SIMULATED_SOURCES,
         }
 
     def __post_init__(self) -> None:

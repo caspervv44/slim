@@ -6,6 +6,7 @@ Bewegingshardware is uitgesteld naar een latere fase.
 Gebruik:
     python -m wekker [--port 8080] [--settings wekker-settings.json]
     python -m wekker simulate [--demo]
+    python -m wekker gui [--window]   (touchscreen, fullscreen 800x480)
 
 Op de laptop draait alles met mocks; op de Pi wordt ``build_default``
 later uitgebreid met echte drivers zonder de core te wijzigen.
@@ -20,9 +21,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from wekker.agenda.auth import AuthService, MockEntreeAuth
 from wekker.agenda.cache import AgendaCache
-from wekker.agenda.providers import create_provider
-from wekker.agenda.sync import AgendaSyncService
+from wekker.agenda.providers import build_sync_provider
 from wekker.alarm.core import AlarmClock
 from wekker.alarm.state import AlarmState
 from wekker.api.server import AppContext, serve_forever
@@ -93,19 +94,19 @@ def build_default(settings_path: str | Path = "wekker-settings.json") -> Runtime
             display.button_pressed()
 
     core = AlarmClock(settings, clock, speaker, lamp, on_state_change=_wake_on_ring)
+    auth = AuthService(clock, providers={"osiris": MockEntreeAuth(clock)})
     try:
-        provider = create_provider(settings.agenda.provider)
+        sync = build_sync_provider(settings.agenda.provider, cache, clock, auth)
     except Exception as exc:
         # Onbekend platform mag de start nooit blokkeren (zie sync-service).
         log.warning("agenda-provider niet beschikbaar, mock gebruikt: %s", exc)
-        provider = create_provider("mock")
-    sync = AgendaSyncService(provider, cache, clock)
+        sync = build_sync_provider("mock", cache, clock, auth)
     controller = ButtonController(core, lamp, display, clock, settings)
     # Eén fysieke button: eerst de controller (zet o.a. de melding), daarna
     # het display wekken zodat alles in één keer gerenderd wordt.
     button.on_press(controller.press)
     button.on_press(display.button_pressed)
-    ctx = AppContext(settings, store, clock, core, display, cache, sync, controller)
+    ctx = AppContext(settings, store, clock, core, display, cache, sync, controller, auth)
     return Runtime(
         ctx=ctx,
         button=button,
@@ -195,10 +196,20 @@ def main(argv: list[str] | None = None) -> None:
                        help="niet-interactief: ';'-gescheiden commando's")
     sim_p.add_argument("--demo", action="store_true",
                        help="volledige alarmcyclus afspelen en stoppen")
+    gui_p = sub.add_parser("gui", help="fullscreen touchscreen-GUI (800x480)")
+    gui_p.add_argument("--window", action="store_true",
+                       help="venster i.p.v. fullscreen (development op laptop)")
+    gui_p.add_argument("--host", default="127.0.0.1",
+                       help="bind-adres webinterface (0.0.0.0 = lokaal netwerk)")
+    gui_p.add_argument("--port", type=int, default=8080)
+    gui_p.add_argument("--settings", default="wekker-settings.json")
     args = parser.parse_args(argv)
     setup_logging()
     if args.command == "simulate":
         run_simulate(args)
+        return
+    if args.command == "gui":
+        run_gui(args)
         return
     try:
         rt = build_default(args.settings)
@@ -211,6 +222,31 @@ def main(argv: list[str] | None = None) -> None:
         while True:
             run_once(rt)
             time.sleep(1)
+    except KeyboardInterrupt:
+        log.info("stoppen…")
+    finally:
+        shutdown(rt)
+        server.shutdown()
+
+
+def run_gui(args: argparse.Namespace) -> None:
+    """Start web-API + fullscreen touchscreen-GUI.
+
+    Op de Pi: ``python -m wekker gui`` (fullscreen 800x480, Alt+Tab werkt).
+    Development: ``python -m wekker gui --window``.
+    """
+    from wekker.gui.app import launch_gui
+
+    try:
+        rt = build_default(args.settings)
+    except StorageError as exc:
+        log.error("opslagfout: %s", exc)
+        raise SystemExit(1) from exc
+    server = serve_forever(rt.ctx, host=args.host, port=args.port)
+    log.info("wekker gestart met touchscreen-GUI (fullscreen=%s). Stop met Esc.",
+             not args.window)
+    try:
+        launch_gui(rt, fullscreen=not args.window)
     except KeyboardInterrupt:
         log.info("stoppen…")
     finally:

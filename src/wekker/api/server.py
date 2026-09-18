@@ -11,7 +11,13 @@ Eerste prototype (geen motor-, wiel- of touch-endpoints):
   GET  /api/settings        huidige instellingen
   POST /api/settings        gedeeltelijke update, bv. {"alarm": {"time": "07:00"}}
   GET  /api/agenda/status   syncstatus + beschikbare providers
+  GET  /api/agenda/providers  alle schoolplatformen + koppelstatus
   GET  /api/agenda/items    lessen van vandaag (alleen mock; anders 501)
+  GET  /api/agenda/auth/status   koppelstatus huidige provider
+  POST /api/agenda/auth/start    start (demo-)Entree-login → {auth_url, state}
+  GET  /api/agenda/auth/mock?state=..  demo-loginpagina (géén echte Entree)
+  POST /api/agenda/auth/callback {state}  rond login af → gekoppeld
+  POST /api/agenda/auth/disconnect  verbreek koppeling
   POST /api/lamp/on         {"duration_seconds": 30} (optioneel)
   POST /api/lamp/off        lamp uit
   POST /api/lamp/test       lamp 3 s aan (test)
@@ -29,10 +35,16 @@ import threading
 import time
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
+from wekker.agenda.auth import AuthError, AuthService, MAX_STATE_LEN
 from wekker.agenda.cache import AgendaCache
-from wekker.agenda.providers import create_provider_or_error
+from wekker.agenda.models import SIMULATED_SOURCES
+from wekker.agenda.providers import (
+    build_sync_provider,
+    get_provider_info,
+    list_providers,
+)
 from wekker.agenda.sync import AgendaSyncService
 from wekker.alarm.core import AlarmClock
 from wekker.button.controller import ButtonController
@@ -69,6 +81,7 @@ class AppContext:
     cache: AgendaCache
     sync: AgendaSyncService
     button: ButtonController
+    auth: AuthService
 
 
 INDEX_HTML = """<!doctype html><html lang="nl"><head><meta charset="utf-8">
@@ -89,7 +102,7 @@ table{border-collapse:collapse;width:100%;font-size:.9rem}
 td,th{border-bottom:1px solid #ddd;padding:.3rem;text-align:left}
 </style>
 </head><body>
-<h1>Wekker setup</h1>
+<h1>Aventus Wekker</h1>
 <p>De wekker werkt zelfstandig; deze pagina is alleen voor instellen. Lokaal prototype zonder inlog.</p>
 <div class="row"><button class="primary" onclick="ping()">Verbinding testen</button><span id="ping"></span></div>
 
@@ -128,7 +141,11 @@ td,th{border-bottom:1px solid #ddd;padding:.3rem;text-align:left}
 <div class="row"><button class="primary" onclick="save()">Opslaan</button></div>
 <pre id="settings">laden…</pre>
 
-<h2>Agenda (voorbeeldgegevens)</h2>
+<h2>Agenda</h2>
+<div class="row"><label>Provider <select id="f_prov"></select></label></div>
+<div class="card" id="auth">laden…</div>
+<div class="row"><button onclick="act('/api/agenda/auth/disconnect')">Koppeling verbreken</button></div>
+<div class="card" id="sync">laden…</div>
 <div id="agenda">laden…</div>
 
 <script>
@@ -139,8 +156,8 @@ async function ping(){try{await jget('/api/status');$('ping').textContent='✓ v
 async function load(){
  try{
   const s=await jget('/api/status');
-  $('status').innerHTML='Toestand: <b>'+s.state+'</b><br>Tijd: '+s.now.slice(11,19)
-   +'<br>Volgend alarm: '+(s.next_alarm?s.next_alarm.slice(0,16).replace('T',' '):'uit')
+   $('status').innerHTML='Toestand: <b>'+s.state+'</b><br>Tijd: '+s.now.slice(11,19)
+   +'<br>Volgende alarm: '+(s.next_alarm?s.next_alarm.slice(0,16).replace('T',' '):'uit')
    +'<br>Lamp: '+(s.lamp_on?'aan':'uit')+' · Speaker: '+(s.speaker_playing?'aan':'uit');
   const c=await jget('/api/settings');
   $('settings').textContent=JSON.stringify(c,null,1);
@@ -148,7 +165,21 @@ async function load(){
   $('f_spk').checked=c.alarm.speaker_enabled;$('f_lamp').checked=c.lamp.on_with_alarm;
   $('f_sound').value=c.alarm.sound;
   const prov=$('f_prov');prov.innerHTML='';
-  (c._providers||['mock']).forEach(p=>{const o=document.createElement('option');o.value=p;o.textContent=p+(p==='mock'?' (voorbeeld)':' (nog niet beschikbaar)');if(p===c.agenda.provider)o.selected=true;prov.appendChild(o)});
+  const plist=await jget('/api/agenda/providers');
+  plist.providers.forEach(p=>{const o=document.createElement('option');o.value=p.id;
+   o.textContent=p.display_name+(p.available?'':' (later)');if(p.selected)o.selected=true;prov.appendChild(o)});
+  const astat=await jget('/api/agenda/auth/status');
+  $('status').innerHTML+='<br>Agenda: '+astat.provider_name+(astat.linked?' (gekoppeld)':'')
+   +'<br>Verbinding: verbonden';
+  let authHtml='Agenda: <b>'+astat.provider_name+'</b> ('+astat.school+')<br>';
+  if(astat.linked){authHtml+='Gekoppeld als '+astat.account+(astat.demo?' (demo)':'')}
+  else if(astat.available&&astat.login_label){authHtml+='Niet gekoppeld. <button class="primary" onclick="link()">'+astat.login_label+'</button>'}
+  else{authHtml+='Nog niet beschikbaar voor dit platform.'}
+  $('auth').innerHTML=authHtml;
+  const gstat=await jget('/api/agenda/status');
+  $('sync').innerHTML='Sync: '+gstat.status+(gstat.last_sync?' ('+gstat.last_sync.slice(0,16).replace('T',' ')+')':'')
+   +(gstat.stale?' · <b>mogelijk verouderd</b>':' · actueel')
+   +(gstat.error?'<br>Fout: '+gstat.error:'');
   try{
    const a=await jget('/api/agenda/items');
    $('agenda').innerHTML=(a.simulated?'<span class="badge">gesimuleerd (mock)</span> ':'')
@@ -157,6 +188,16 @@ async function load(){
  }catch(e){$('status').textContent='Fout: '+e}
 }
 async function act(u,b){try{await jpost(u,b)}catch(e){alert(e)}load()}
+async function link(){
+ try{
+  // Sla eerst de gekozen provider op, start dan de login-flow.
+  await jpost('/api/settings',{agenda:{provider:$('f_prov').value}});
+  const f=await jpost('/api/agenda/auth/start',{});
+  window.open(f.auth_url,'_blank');
+  alert('Rond de login af in het geopende venster en druk daarna op OK.');
+ }catch(e){alert(e)}
+ load();
+}
 async function save(){
  const body={alarm:{time:$('f_time').value,speaker_enabled:$('f_spk').checked,sound:$('f_sound').value},
   lamp:{duration_after_button:parseInt($('f_lampdur').value,10),on_with_alarm:$('f_lamp').checked},
@@ -183,15 +224,93 @@ def _apply_settings(ctx: AppContext, patch: dict) -> dict:
     ctx.core.update_settings(nieuwe)
     ctx.display.update_settings(nieuwe)
     ctx.button.update_settings(nieuwe)
-    # Providerwissel: bouw de passende adapter (alleen mock werkt echt).
-    ctx.sync = AgendaSyncService(create_provider_or_error(nieuwe.agenda.provider),
-                                 ctx.cache, ctx.clock)
+    # Providerwissel: bouw de passende adapter (mock direct, osiris met
+    # koppeling, overige eerlijk "nog niet beschikbaar").
+    ctx.sync = build_sync_provider(nieuwe.agenda.provider, ctx.cache, ctx.clock, ctx.auth)
     try:
         ctx.store.save(nieuwe.to_dict())
     except StorageError as exc:
         log.warning("opslaan mislukt (instellingen wel actief): %s", exc)
         return {**nieuwe.to_dict(), "warning": str(exc)}
     return nieuwe.to_dict()
+
+
+def _is_connected(ctx: AppContext) -> bool:
+    """Heeft de gekozen provider bruikbare data? mock altijd; osiris alleen
+    gekoppeld; overige platforms nooit (nog niet beschikbaar)."""
+    provider_id = ctx.settings.agenda.provider
+    if provider_id == "mock":
+        return True
+    if provider_id == "osiris":
+        return ctx.auth.is_linked("osiris")
+    return False
+
+
+def _send_html(handler: BaseHTTPRequestHandler, html: str) -> None:
+    body = html.encode("utf-8")
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/html; charset=utf-8")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
+def _valid_state(state: str) -> bool:
+    """Strenge validatie van login-state-tokens (alleen URL-veilige tekens)."""
+    if not isinstance(state, str) or not state or len(state) > MAX_STATE_LEN:
+        return False
+    return all(c.isalnum() or c in "-_" for c in state)
+
+
+def _mock_login_page(state: str) -> str:
+    """Demo-loginpagina. Expliciet géén echte Entree-login: er wordt nergens
+    om een gebruikersnaam of wachtwoord gevraagd."""
+    return f"""<!doctype html><html lang="nl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Demo-login (geen echte Entree)</title>
+<style>body{{font-family:system-ui,sans-serif;max-width:560px;margin:2rem auto;padding:0 1rem}}
+.badge{{background:#ffd75e;border-radius:.4rem;padding:.2rem .6rem}}</style>
+</head><body>
+<h1>Demo-login <span class="badge">DEMO</span></h1>
+<p>Dit is een <b>gesimuleerde</b> Entree-login voor development. Er wordt
+<b>nergens om een wachtwoord gevraagd</b> en er worden geen echte
+schooldaten opgehaald.</p>
+<div class="row"><button style="font-size:1.1rem;padding:.7rem 1rem"
+onclick="doorgaan()">Doorgaan als demo-student</button></div>
+<p id="msg"></p>
+<script>
+async function doorgaan(){{
+ const r=await fetch('/api/agenda/auth/callback',{{method:'POST',
+  headers:{{'Content-Type':'application/json'}},
+  body:JSON.stringify({{state:{state!r}}})}});
+ const b=await r.json();
+ if(r.ok){{document.getElementById('msg').textContent='Gekoppeld als '+b.account+'. Je kunt terug naar de wekker.'}}
+ else{{document.getElementById('msg').textContent='Fout: '+(b.error||r.status)}}
+}}
+</script></body></html>"""
+
+
+def _send_items(handler: BaseHTTPRequestHandler, ctx: AppContext) -> None:
+    provider_id = ctx.settings.agenda.provider
+    if provider_id == "osiris" and not ctx.auth.is_linked("osiris"):
+        _send(handler, 409, {
+            "error": "Osiris is niet gekoppeld. Koppel via 'Agenda koppelen' "
+                     "→ 'ROC Aventus / Osiris'.",
+            "action": "link",
+        })
+        return
+    if provider_id not in ("mock", "osiris"):
+        _send(handler, 501, {
+            "error": f"Provider {provider_id!r} nog niet "
+                     "beschikbaar; kies 'mock' voor voorbeeldgegevens.",
+        })
+        return
+    lessen = ctx.cache.get_day(ctx.clock.now().date())
+    _send(handler, 200, {
+        "simulated": all(les.source in SIMULATED_SOURCES for les in lessen),
+        "provider": provider_id,
+        "items": [les.to_dict() for les in lessen],
+    })
 
 
 def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
@@ -225,6 +344,33 @@ def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
             data["agenda_stale"] = ctx.cache.is_stale(ctx.clock.now())
             return data
 
+        def _base_url(self) -> str:
+            host, port = self.server.server_address[:2]
+            return f"http://{host}:{port}"
+
+        def _query(self) -> dict:
+            return parse_qs(urlparse(self.path).query)
+
+        def _auth_status_dict(self) -> dict:
+            provider_id = ctx.settings.agenda.provider
+            try:
+                info = get_provider_info(provider_id)
+            except ValueError:
+                return {"provider": provider_id, "error": "Onbekende provider"}
+            link = ctx.auth.get_link(provider_id)
+            auth_provider = ctx.auth.providers.get(provider_id)
+            return {
+                "provider": provider_id,
+                "provider_name": info.display_name,
+                "school": info.school,
+                "auth": info.auth,
+                "available": info.available,
+                "linked": link is not None,
+                "account": link.account_label if link else None,
+                "demo": link.demo if link else False,
+                "login_label": auth_provider.login_label if auth_provider else None,
+            }
+
         def do_GET(self) -> None:
             path = urlparse(self.path).path
             try:
@@ -245,22 +391,37 @@ def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
                     data = ctx.cache.status_dict()
                     data["provider"] = ctx.sync.provider_name
                     data["available_providers"] = sorted(ALLOWED_PROVIDERS)
-                    data["connected"] = ctx.sync.provider_name == "mock"
+                    data["connected"] = _is_connected(ctx)
+                    data["linked"] = ctx.auth.is_linked(ctx.settings.agenda.provider)
                     data["stale"] = ctx.cache.is_stale(ctx.clock.now())
                     _send(self, 200, data)
-                elif path == "/api/agenda/items":
-                    if ctx.sync.provider_name != "mock":
-                        _send(self, 501, {
-                            "error": f"Provider {ctx.sync.provider_name!r} nog niet "
-                                     "beschikbaar; kies 'mock' voor voorbeeldgegevens.",
+                elif path == "/api/agenda/providers":
+                    items = []
+                    for info in list_providers():
+                        items.append({
+                            "id": info.id,
+                            "display_name": info.display_name,
+                            "school": info.school,
+                            "auth": info.auth,
+                            "available": info.available,
+                            "description": info.description,
+                            "linked": ctx.auth.is_linked(info.id),
+                            "selected": info.id == ctx.settings.agenda.provider,
                         })
+                    _send(self, 200, {"providers": items})
+                elif path == "/api/agenda/items":
+                    _send_items(self, ctx)
+                    return
+                elif path == "/api/agenda/auth/status":
+                    _send(self, 200, self._auth_status_dict())
+                    return
+                elif path == "/api/agenda/auth/mock":
+                    state = self._query().get("state", [""])[0]
+                    if not _valid_state(state):
+                        _send(self, 400, {"error": "Ongeldige of ontbrekende state."})
                         return
-                    lessen = ctx.cache.get_day(ctx.clock.now().date())
-                    _send(self, 200, {
-                        "simulated": True,
-                        "provider": "mock",
-                        "items": [les.to_dict() for les in lessen],
-                    })
+                    _send_html(self, _mock_login_page(state))
+                    return
                 else:
                     _send(self, 404, {"error": "Onbekend endpoint"})
             except Exception as exc:  # pragma: no cover - defensief
@@ -302,6 +463,43 @@ def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
                     ctx.core.sound_stop()
                     _send(self, 200, {"ok": True, "sound": ctx.settings.alarm.sound,
                                       "seconds": SPEAKER_TEST_SECONDS})
+                elif path == "/api/agenda/auth/start":
+                    provider_id = ctx.settings.agenda.provider
+                    try:
+                        info = get_provider_info(provider_id)
+                    except ValueError as exc:
+                        _send(self, 400, {"error": str(exc)})
+                        return
+                    if info.auth == "none":
+                        _send(self, 409, {"error": "Deze provider heeft geen login nodig."})
+                        return
+                    if not info.available or provider_id not in ctx.auth.providers:
+                        _send(self, 501, {
+                            "error": f"Voor {info.display_name} is nog geen "
+                                     "login beschikbaar.",
+                        })
+                        return
+                    flow = ctx.auth.start_flow(provider_id, self._base_url())
+                    _send(self, 200, {
+                        "ok": True,
+                        "auth_url": flow.auth_url,
+                        "expires_at": flow.expires_at.isoformat(),
+                    })
+                elif path == "/api/agenda/auth/callback":
+                    state = body.get("state", "")
+                    if not _valid_state(state):
+                        _send(self, 400, {"error": "Ongeldige of ontbrekende state."})
+                        return
+                    try:
+                        link = ctx.auth.complete_flow(ctx.settings.agenda.provider, state)
+                    except AuthError as exc:
+                        _send(self, 400, {"error": str(exc)})
+                        return
+                    _send(self, 200, {"ok": True, "account": link.account_label,
+                                      "demo": link.demo})
+                elif path == "/api/agenda/auth/disconnect":
+                    had = ctx.auth.disconnect(ctx.settings.agenda.provider)
+                    _send(self, 200, {"ok": True, "was_linked": had})
                 else:
                     _send(self, 404, {"error": "Onbekend endpoint"})
             except (SettingsError, ValueError) as exc:

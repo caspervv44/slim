@@ -28,13 +28,13 @@ commando's voordat je drivers kiest.
 | # | Onderdeel | Merk/model | Interface | Voeding | Driver/bib | Status |
 |---|---|---|---|---|---|---|
 | 1 | Raspberry Pi 5 | ❓ (variant/RAM onbekend) | — | ❓ (officiële 5V/5A?) | Raspberry Pi OS ❓ (versie?) | ONBEKEND |
-| 2 | LED-display (bestaand) | ❓ | ❓ (GPIO-direct / I2C / SPI / USB / HAT?) | ❓ | ❓ (paneeltype bepaalt alles) | ONBEKEND |
+| 2 | 5-inch touchscreen (opgave project) | 800x480, touch aanwezig | Waarschijnlijk HDMI (beeld) + USB (touch) — **verifiëren op apparaat** | Via Pi (USB) | tkinter fullscreen (geen driver nodig) | DEELS BEKEND |
 | 3 | Speaker | ❓ (passief/actief, USB / 3,5mm / HAT / GPIO-zoemer?) | ❓ | ❓ | ❓ (`aplay`? pygame? gpiozero-tones?) | ONBEKEND |
 | 4 | Lamp / LED | ❓ (LED-strip, power-LED, relais?) | ❓ (GPIO+transistor/relais? PWM voor dimmen/knipperen?) | ❓ (eigen voeding bij >20 mA!) | gpiozero (waarschijnlijk) | ONBEKEND |
 | 5 | Eén fysieke button (boven op speaker) | ❓ (maakcontact?) | GPIO digitaal in (met pull-up/down; debounce in software) | — (signaal) | gpiozero `Button` | ONBEKEND |
 | 6 | Voeding totaal | ❓ | — | ❓ | — | ONBEKEND |
 | — | Wielen / motoren / motorcontroller | — | — | — | — | UITGESTELD naar latere fase |
-| — | Touchdisplay / touchsensoren | — | — | — | — | UITGESTELD naar latere fase |
+| — | Touchsensoren (oppakken/aanraken; níet het touchscreen zelf) | — | — | — | — | UITGESTELD naar latere fase |
 | — | Extra buttons | — | — | — | — | UITGESTELD naar latere fase |
 
 ## 3. Wat per onderdeel nog ontbreekt (checklist voor bij de hardware)

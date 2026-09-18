@@ -22,8 +22,10 @@ deel uit van de eerste werkende versie.
 | Eén button-controller met debounce | Eén fysieke druk is exact één actie; lamp-timer en alarm-afhandeling op één plek |
 | Instellingen als gevalideerde dataclasses | Ongeldige waarden worden bij de grens geweigerd (API + opslag) |
 | JSON-bestand met atomair schrijven | Simpel, SD-kaartvriendelijk, geen database nodig voor prototype |
-| Adapterinterface + register voor agenda | Alleen mock werkt; andere platforms melden eerlijk "nog niet beschikbaar" |
+| Adapterinterface + register voor agenda | Mock direct; Osiris via koppel-flow; overige melden eerlijk "nog niet beschikbaar" |
 | Setup-API is dunne schil | Wekker werkt zelfstandig; telefoon is geen vereiste tijdens wekken |
+| Touch-GUI leest alleen bestaande logica | Schermen als testbare layout-data (screens.py) + dunne tkinter-renderer; geen eigen alarm/agenda-logica |
+| Auth-abstractie zonder wachtwoorden | AuthProvider-protocol + demo-flow met eenmalige states; echte Entree/OIDC later zonder GUI- of core-refactor |
 
 ## Moduleoverzicht
 
@@ -50,7 +52,10 @@ src/wekker/
 │   ├── cache.py        Laatste rooster + syncstatus + stale-detectie
 │   └── sync.py         AgendaSyncService (fouttolerant)
 ├── api/
-│   └── server.py       Setup-API + mobiele setup-pagina (stdlib)
+│   └── server.py       Setup-API + mobiele setup-pagina + auth-endpoints (stdlib)
+├── gui/
+│   ├── screens.py      Navigator + schermdata + layouts (géén tkinter, testbaar)
+│   └── app.py          tkinter-renderer, fullscreen 800x480, 1s-loop
 ├── sim.py              Simulatiemodus (echte core, nep-tijd, mocks)
 └── main.py             Composition root + wekkerlus (1 Hz tick) + auto-sync
 ```
@@ -111,16 +116,36 @@ Regels:
 
 ## Agenda-versheid en providers
 
-- `AgendaCache.is_stale(now)` is True als nooit gesynchroniseerd is of de
-  laatste sync ouder is dan 24 uur (`STALE_AFTER`).
-- `GET /api/agenda/status` geeft `stale`, `connected` en `available_providers`
-  terug; `GET /api/agenda/items` geeft lessen met `simulated`-vlag (alleen
-  mock) of 501 ("nog niet beschikbaar") voor andere platforms.
+- Provider-register (`agenda/providers.py`): `mock` (direct, auth none),
+  `osiris` (OSIRIS–ROC Aventus, auth `entree-oidc`, koppeling vereist),
+  `somtoday`/`magister`/`myx` (geregistreerd maar `available=False`).
+  GUI en webinterface gebruiken alleen `list_providers()` en de generieke
+  `AgendaProvider`-interface — geen school-specifieke takken in core/GUI/API.
+- Koppelingen (`agenda/auth.py`): `AuthService` bewaart alleen `AuthLink`
+  (provider, accountlabel, demo-vlag — géén wachtwoorden/tokens).
+  `MockEntreeAuth` simuleert de login-vorm met eenmalige, kort geldige states.
+- `GET /api/agenda/status` geeft `stale`, `connected`, `linked` en
+  `available_providers` terug; `GET /api/agenda/providers` de volledige
+  registerlijst met koppelstatus; `GET /api/agenda/items` geeft lessen met
+  `simulated`-vlag, 409 bij ontbrekende Osiris-koppeling of 501 bij
+  niet-beschikbare platforms.
 - Een mislukte sync (`status: error`) wist de cache nooit: oude lessen
   blijven zichtbaar, gemarkeerd als mogelijk verouderd.
 - De wekkerlus synchroniseert periodiek volgens `agenda.auto_sync_minutes`
   (0 = uit). Echte adapters leveren lessen timezone-aware in de lokale
   systeemtijdzone (zie providercontract in `providers.py`).
+
+## Touchscreen-GUI (`src/wekker/gui/`)
+
+- `screens.py`: `Navigator` (links/rechts met wrap, uitbreidbaar via
+  `register`), formatters (`HH:MM`/`uit`), `MainScreenData` (tijd + alarm),
+  `AgendaScreenData` (provider, dag, max. 5 lessen, simulated-badge) en
+  `main_layout`/`agenda_layout` als pure data. Headless getest.
+- `app.py`: tkinter-renderer (lazy import, dus importeerbaar zonder display),
+  fullscreen 800x480 zonder override-redirect (Alt+Tab werkt), Escape sluit
+  af, F11 schakelt fullscreen, 1-seconde-loop (`run_once` + render).
+- Starten: `python -m wekker gui` (Pi, fullscreen + web-API),
+  `python -m wekker gui --window` (development). Details: `docs/touch-gui.md`.
 
 ## Simulatiemodus (`src/wekker/sim.py`)
 
@@ -152,10 +177,10 @@ Regels:
 | Platform | Methode | Auth | Status |
 |---|---|---|---|
 | Mock | Ingebouwd | Geen | ✅ Werkend (voorbeeldgegevens, als zodanig gemarkeerd) |
-| Magister | Nog te onderzoeken (officiële API?) | Onbekend (later OAuth/token) | Kiesbaar in setup-app, **nog niet beschikbaar** |
-| Somtoday | Nog te onderzoeken | Onbekend (later OAuth/token) | Kiesbaar in setup-app, **nog niet beschikbaar** |
-| Osiris | Nog te onderzoeken | Onbekend (later OAuth/token) | Kiesbaar in setup-app, **nog niet beschikbaar** |
-| MyX | Nog te onderzoeken | Onbekend (later OAuth/token) | Kiesbaar in setup-app, **nog niet beschikbaar** |
+| Osiris (ROC Aventus) | Voorbereide provider + demo-login | Entree/OIDC (nog te regelen, zie `docs/osiris-entree.md`) | Demo-koppeling werkend; echte API nog niet |
+| Somtoday | Nog te onderzoeken | Onbekend (later OAuth/token) | Geregistreerd als "later" |
+| Magister | Nog te onderzoeken (officiële API?) | Onbekend (later OAuth/token) | Geregistreerd als "later" |
+| MyX | Nog te onderzoeken | Onbekend (later OAuth/token) | Geregistreerd als "later" |
 
 Standaardaanpak: alleen officiële, gedocumenteerde API's met OAuth/API-keys.
 Geen scraping of omzeiling als standaardoplossing. Geheimen horen in een veilige
