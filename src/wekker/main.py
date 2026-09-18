@@ -1,0 +1,248 @@
+"""Composition root: bouwt alle onderdelen en start de wekkerlus.
+
+Eerste prototype: display + speaker + lamp + één button op een Raspberry Pi 5.
+Bewegingshardware is uitgesteld naar een latere fase.
+
+Gebruik:
+    python -m wekker [--port 8080] [--settings wekker-settings.json]
+    python -m wekker simulate [--demo]
+
+Op de laptop draait alles met mocks; op de Pi wordt ``build_default``
+later uitgebreid met echte drivers zonder de core te wijzigen.
+GPIO-pinnen liggen nog nergens vast.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+from wekker.agenda.cache import AgendaCache
+from wekker.agenda.providers import create_provider
+from wekker.agenda.sync import AgendaSyncService
+from wekker.alarm.core import AlarmClock
+from wekker.alarm.state import AlarmState
+from wekker.api.server import AppContext, serve_forever
+from wekker.button.controller import ButtonController
+from wekker.clock import SystemClock
+from wekker.display.manager import DisplayManager
+from wekker.hardware.interfaces import Button, DisplayDriver, Lamp, Speaker
+from wekker.hardware.mock import (
+    MockButton,
+    MockDisplay,
+    MockLamp,
+    MockSpeaker,
+)
+from wekker.logging_config import setup_logging
+from wekker.settings import Settings, SettingsError, default_settings
+from wekker.storage import JsonStore, StorageError
+
+log = logging.getLogger(__name__)
+
+
+@dataclass
+class Runtime:
+    """Alles wat de wekkerlus nodig heeft: context + hardwarehandles.
+
+    Op de laptop zijn dit mocks; op de Pi komen hier de echte drivers met
+    dezelfde Protocols (display/speaker/lamp/button).
+    """
+
+    ctx: AppContext
+    button: Button
+    controller: ButtonController
+    speaker: Speaker
+    lamp: Lamp
+    driver: DisplayDriver
+
+
+def load_settings(store: JsonStore) -> Settings:
+    try:
+        data = store.load()
+    except StorageError as exc:
+        # Corrupt of onleesbaar bestand: val terug op veilige defaults zodat
+        # de wekker (headless op de Pi) blijft wekken. Het bestand wordt bewust
+        # NIET overschreven; herstel via de setup-API (POST schrijft opnieuw).
+        log.warning("instellingen onleesbaar, defaults gebruikt: %s", exc)
+        return default_settings()
+    if data is None:
+        return default_settings()
+    try:
+        return Settings.from_dict(data)
+    except SettingsError as exc:
+        log.warning("ongeldig instellingenbestand, defaults gebruikt: %s", exc)
+        return default_settings()
+
+
+def build_default(settings_path: str | Path = "wekker-settings.json") -> Runtime:
+    store = JsonStore(settings_path)
+    settings = load_settings(store)
+    clock = SystemClock()
+    speaker, lamp = MockSpeaker(), MockLamp()
+    display_driver = MockDisplay()
+    button = MockButton()
+    cache = AgendaCache()
+    display = DisplayManager(display_driver, settings, clock, cache)
+
+    def _wake_on_ring(old: AlarmState, new: AlarmState) -> None:
+        if new is AlarmState.RINGING:
+            # Alarm gaat af: display aanzetten zodat de status zichtbaar is.
+            display.button_pressed()
+
+    core = AlarmClock(settings, clock, speaker, lamp, on_state_change=_wake_on_ring)
+    try:
+        provider = create_provider(settings.agenda.provider)
+    except Exception as exc:
+        # Onbekend platform mag de start nooit blokkeren (zie sync-service).
+        log.warning("agenda-provider niet beschikbaar, mock gebruikt: %s", exc)
+        provider = create_provider("mock")
+    sync = AgendaSyncService(provider, cache, clock)
+    controller = ButtonController(core, lamp, display, clock, settings)
+    # Eén fysieke button: eerst de controller (zet o.a. de melding), daarna
+    # het display wekken zodat alles in één keer gerenderd wordt.
+    button.on_press(controller.press)
+    button.on_press(display.button_pressed)
+    ctx = AppContext(settings, store, clock, core, display, cache, sync, controller)
+    return Runtime(
+        ctx=ctx,
+        button=button,
+        controller=controller,
+        speaker=speaker,
+        lamp=lamp,
+        driver=display_driver,
+    )
+
+
+def run_once(rt: Runtime) -> None:
+    """Eén wekkertik (1 Hz). Vangt hardwarefouten op zodat één defecte
+    driver of één mislukte tick het proces nooit stilzet — de core houdt
+    bij een fout zijn oude toestand en probeert het volgende seconde opnieuw.
+    """
+    try:
+        rt.ctx.core.tick()
+    except Exception:
+        log.exception("alarm-tick faalde; volgende seconde opnieuw geprobeerd")
+    try:
+        rt.ctx.display.tick()
+    except Exception:
+        log.exception("display-tick faalde; volgende seconde opnieuw geprobeerd")
+    try:
+        rt.ctx.button.tick()
+    except Exception:
+        log.exception("button-tick faalde; volgende seconde opnieuw geprobeerd")
+    _update_display_context(rt)
+    maybe_auto_sync(rt)
+
+
+def _update_display_context(rt: Runtime) -> None:
+    """Houd het display bij met alarmtoestand + volgende wektijd."""
+    try:
+        nxt = rt.ctx.core.next_alarm()
+        rt.ctx.display.set_alarm_context(
+            rt.ctx.core.state.value,
+            nxt.strftime("%H:%M") if nxt else None,
+        )
+    except Exception:
+        log.exception("display-context bijwerken faalde")
+
+
+def maybe_auto_sync(rt: Runtime) -> bool:
+    """Synchroniseer periodiek volgens agenda.auto_sync_minutes (0 = uit).
+
+    Geeft True terug als er gesynchroniseerd is. Fouten markeren de cache
+    als error/stale maar stoppen de wekker nooit.
+    """
+    minutes = rt.ctx.settings.agenda.auto_sync_minutes
+    if minutes <= 0:
+        return False
+    last = rt.ctx.cache.last_sync
+    if last is not None:
+        from datetime import timedelta
+
+        if rt.ctx.clock.now() - last < timedelta(minutes=minutes):
+            return False
+    try:
+        return rt.ctx.sync.sync_today()
+    except Exception:
+        log.exception("automatische agenda-sync faalde")
+        return False
+
+
+def shutdown(rt: Runtime) -> None:
+    """Veilig afsluiten: lamp altijd uit, daarna pas stoppen."""
+    try:
+        rt.controller.shutdown()
+    except Exception:
+        log.exception("lamp uitschakelen bij shutdown faalde")
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Slimme schoolwekker (mock-modus)")
+    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--settings", default="wekker-settings.json")
+    parser.add_argument("--host", default="127.0.0.1")
+    sub = parser.add_subparsers(dest="command")
+    sim_p = sub.add_parser("simulate", help="lokale simulatie met bestuurbare tijd")
+    sim_p.add_argument("--start", default="07:29:50", help="starttijd HH:MM[:SS]")
+    sim_p.add_argument("--day", default="2026-09-17", help="simulatiedatum YYYY-MM-DD")
+    sim_p.add_argument("--alarm", default="07:30", help="wektijd HH:MM")
+    sim_p.add_argument("--snooze", type=int, default=5, help="snoozeminuten")
+    sim_p.add_argument("--lampdur", type=int, default=30, help="lampseconden na button")
+    sim_p.add_argument("--commands", default=None,
+                       help="niet-interactief: ';'-gescheiden commando's")
+    sim_p.add_argument("--demo", action="store_true",
+                       help="volledige alarmcyclus afspelen en stoppen")
+    args = parser.parse_args(argv)
+    setup_logging()
+    if args.command == "simulate":
+        run_simulate(args)
+        return
+    try:
+        rt = build_default(args.settings)
+    except StorageError as exc:
+        log.error("opslagfout: %s", exc)
+        raise SystemExit(1) from exc
+    server = serve_forever(rt.ctx, host=args.host, port=args.port)
+    log.info("wekker gestart (mock-hardware). Stop met Ctrl+C.")
+    try:
+        while True:
+            run_once(rt)
+            time.sleep(1)
+    except KeyboardInterrupt:
+        log.info("stoppen…")
+    finally:
+        shutdown(rt)
+        server.shutdown()
+
+
+def run_simulate(args: argparse.Namespace) -> None:
+    """Start de simulatie: --demo, --commands of interactieve REPL."""
+    from wekker.settings import SettingsError
+    from wekker.sim import SimOptions, Simulation, demo_transcript, repl, run_script
+
+    try:
+        sim = Simulation(
+            SimOptions(
+                start=args.start,
+                day=args.day,
+                alarm=args.alarm,
+                snooze_minutes=args.snooze,
+                lamp_duration_after_button=args.lampdur,
+            )
+        )
+    except SettingsError as exc:
+        print(f"fout: {exc}")
+        raise SystemExit(2) from exc
+    if args.demo:
+        print(demo_transcript(sim))
+    elif args.commands:
+        raise SystemExit(run_script(sim, args.commands))
+    else:
+        raise SystemExit(repl(sim))
+
+
+if __name__ == "__main__":
+    main()
