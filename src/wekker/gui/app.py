@@ -70,6 +70,12 @@ class TouchApp:
         except Exception:  # pragma: no cover - afhankelijk van backend
             pass
         self._frame = self._make_frame()
+        # Widgets worden één keer opgebouwd en daarna alleen bijgewerkt.
+        # Volledig destroyen/rebuilden iedere seconde gaf een zichtbare
+        # flash; daarom houdt render() bestaande widgets in leven en past
+        # het alleen veranderde teksten aan via config().
+        self._screen: str | None = None
+        self._widgets: dict[str, Any] = {}
         self.render()
 
     # -- tkinter-fabriekjes (overschrijfbaar/testbaar, dunne schil) --------
@@ -90,40 +96,105 @@ class TouchApp:
 
     # -- render ------------------------------------------------------------
     def render(self) -> dict:
-        """Render het actieve scherm opnieuw. Geeft de layout terug (tests)."""
+        """Werk het actieve scherm bij. Geeft de layout terug (tests).
+
+        Widgets worden hergebruikt: alleen bij een schermwissel of een
+        structurele wijziging (rijen/badge aan/uit) wordt opnieuw
+        opgebouwd, verder worden alleen veranderde teksten aangepast.
+        """
         layout = layout_for(self._nav, build_gui_data(self._runtime))
-        self._clear()
-        if layout["screen"] == ScreenId.MAIN.value:
-            self._render_main(layout)
+        if layout["screen"] != self._screen:
+            self._rebuild(layout)
+        elif layout["screen"] == ScreenId.MAIN.value:
+            self._update_main(layout)
         else:
-            self._render_agenda(layout)
+            self._update_agenda(layout)
         return layout
 
-    def _render_main(self, layout: dict) -> None:
+    def _rebuild(self, layout: dict) -> None:
+        """Bouw het scherm volledig opnieuw (schermwissel of structuurwijziging)."""
+        self._clear()
+        self._widgets = {}
+        self._screen = layout["screen"]
+        if layout["screen"] == ScreenId.MAIN.value:
+            self._build_main(layout)
+        else:
+            self._build_agenda(layout)
+
+    @staticmethod
+    def _set_text(widget: Any, text: str) -> None:
+        """Pas de tekst aan, maar alleen als hij echt veranderd is."""
+        try:
+            current = widget.cget("text")
+        except Exception:
+            current = None
+        if current != text:
+            widget.config(text=text)
+
+    def _build_main(self, layout: dict) -> None:
         tk = self._tk()
-        tk.Label(self._frame, text=layout["time"], font=("DejaVu Sans", 130),
-                 fg="white", bg="black").pack(pady=(30, 0))
-        tk.Label(self._frame, text=f'{layout["alarm_label"]}  {layout["alarm"]}',
-                 font=("DejaVu Sans", 44), fg="#cccccc", bg="black").pack(pady=(10, 20))
+        time_label = tk.Label(self._frame, text=layout["time"], font=("DejaVu Sans", 130),
+                              fg="white", bg="black")
+        time_label.pack(pady=(30, 0))
+        alarm_label = tk.Label(self._frame, text=f'{layout["alarm_label"]}  {layout["alarm"]}',
+                               font=("DejaVu Sans", 44), fg="#cccccc", bg="black")
+        alarm_label.pack(pady=(10, 20))
+        self._widgets["time"] = time_label
+        self._widgets["alarm"] = alarm_label
         self._render_arrows(layout)
 
-    def _render_agenda(self, layout: dict) -> None:
+    def _update_main(self, layout: dict) -> None:
+        self._set_text(self._widgets["time"], layout["time"])
+        self._set_text(self._widgets["alarm"], f'{layout["alarm_label"]}  {layout["alarm"]}')
+
+    def _build_agenda(self, layout: dict) -> None:
         tk = self._tk()
-        tk.Label(self._frame, text=layout["title"], font=("DejaVu Sans", 36),
-                 fg="white", bg="black").pack(pady=(16, 0))
-        tk.Label(self._frame, text=layout["day"], font=("DejaVu Sans", 24),
-                 fg="#cccccc", bg="black").pack()
+        title = tk.Label(self._frame, text=layout["title"], font=("DejaVu Sans", 36),
+                         fg="white", bg="black")
+        title.pack(pady=(16, 0))
+        day = tk.Label(self._frame, text=layout["day"], font=("DejaVu Sans", 24),
+                       fg="#cccccc", bg="black")
+        day.pack()
+        self._widgets["title"] = title
+        self._widgets["day"] = day
         if layout["simulated"]:
-            tk.Label(self._frame, text="demo-data", font=("DejaVu Sans", 20),
-                     fg="black", bg="#ffd75e").pack(pady=(4, 4))
+            badge = tk.Label(self._frame, text="demo-data", font=("DejaVu Sans", 20),
+                             fg="black", bg="#ffd75e")
+            badge.pack(pady=(4, 4))
+            self._widgets["badge"] = badge
         if layout["empty_text"]:
-            tk.Label(self._frame, text=layout["empty_text"],
-                     font=("DejaVu Sans", 28), fg="#cccccc", bg="black").pack(pady=20)
+            empty = tk.Label(self._frame, text=layout["empty_text"],
+                             font=("DejaVu Sans", 28), fg="#cccccc", bg="black")
+            empty.pack(pady=20)
+            self._widgets["empty"] = empty
+        rows = []
         for row in layout["rows"]:
-            tk.Label(self._frame, text=f'{row["time"]}  {row["subject"]}',
-                     font=("DejaVu Sans", 32), fg="white", bg="black",
-                     anchor="w").pack(fill="x", padx=90)
+            label = tk.Label(self._frame, text=f'{row["time"]}  {row["subject"]}',
+                             font=("DejaVu Sans", 32), fg="white", bg="black",
+                             anchor="w")
+            label.pack(fill="x", padx=90)
+            rows.append(label)
+        self._widgets["rows"] = rows
         self._render_arrows(layout)
+
+    def _update_agenda(self, layout: dict) -> None:
+        # Structurele wijzigingen (badge aan/uit, lege-melding aan/uit of
+        # ander aantal rijen) zijn zeldzaam: bouw dan opnieuw op. De hete
+        # lus (zelfde scherm, zelfde structuur) raakt nooit destroy() aan.
+        rows = self._widgets.get("rows", [])
+        if (bool(self._widgets.get("badge")) != bool(layout["simulated"])
+                or bool(self._widgets.get("empty")) != bool(layout["empty_text"])
+                or len(rows) != len(layout["rows"])):
+            self._rebuild(layout)
+            return
+        self._set_text(self._widgets["title"], layout["title"])
+        self._set_text(self._widgets["day"], layout["day"])
+        if layout["empty_text"]:
+            self._set_text(self._widgets["empty"], layout["empty_text"])
+        for label, row in zip(rows, layout["rows"]):
+            self._set_text(label, f'{row["time"]}  {row["subject"]}')
+        # Pijlen zijn statisch per scherm; targets veranderen niet zonder
+        # schermwissel, dus geen update nodig.
 
     def _render_arrows(self, layout: dict) -> None:
         tk = self._tk()
