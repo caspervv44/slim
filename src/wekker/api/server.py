@@ -7,7 +7,9 @@ logica leeft elders.
 
 Eerste prototype (geen motor-, wiel- of touch-endpoints):
 
-  GET  /api/status          toestand, tijd, volgend alarm, lamp, speaker
+  POST /api/login           prototype-login (casper/casper) → sessiecookie
+  POST /api/logout          sessie intrekken
+  GET  /api/status          toestand, tijd, tijdzone, volgend alarm, lamp, speaker
   GET  /api/settings        huidige instellingen
   POST /api/settings        gedeeltelijke update, bv. {"alarm": {"time": "07:00"}}
   GET  /api/agenda/status   syncstatus + beschikbare providers
@@ -33,11 +35,18 @@ import json
 import logging
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from wekker.agenda.auth import AuthError, AuthService, MAX_STATE_LEN
+from wekker.api.webauth import (
+    SESSION_COOKIE,
+    SESSION_TTL,
+    SessionStore,
+    WebAuthError,
+    parse_cookies,
+)
 from wekker.agenda.cache import AgendaCache
 from wekker.agenda.models import SIMULATED_SOURCES
 from wekker.agenda.providers import (
@@ -48,7 +57,7 @@ from wekker.agenda.providers import (
 from wekker.agenda.sync import AgendaSyncService
 from wekker.alarm.core import AlarmClock
 from wekker.button.controller import ButtonController
-from wekker.clock import Clock
+from wekker.clock import Clock, SystemClock
 from wekker.display.manager import DisplayManager
 from wekker.settings import ALLOWED_PROVIDERS, Settings, SettingsError
 from wekker.storage import JsonStore, StorageError
@@ -82,6 +91,10 @@ class AppContext:
     sync: AgendaSyncService
     button: ButtonController
     auth: AuthService
+    # Prototype-weblogin (casper/casper). Default is een eigen store zodat
+    # bestaande constructie (ook in tests) blijft werken; de productiecode
+    # gebruikt dezelfde SystemClock als de rest van de Runtime.
+    sessions: SessionStore = field(default_factory=lambda: SessionStore(SystemClock()))
 
 
 INDEX_HTML = """<!doctype html><html lang="nl"><head><meta charset="utf-8">
@@ -103,8 +116,9 @@ td,th{border-bottom:1px solid #ddd;padding:.3rem;text-align:left}
 </style>
 </head><body>
 <h1>Aventus Wekker</h1>
-<p>De wekker werkt zelfstandig; deze pagina is alleen voor instellen. Lokaal prototype zonder inlog.</p>
-<div class="row"><button class="primary" onclick="ping()">Verbinding testen</button><span id="ping"></span></div>
+<p>De wekker werkt zelfstandig; deze pagina is alleen voor instellen. Prototype met login.</p>
+<div class="row"><button class="primary" onclick="ping()">Verbinding testen</button><span id="ping"></span>
+<button onclick="uitloggen()">Uitloggen</button></div>
 
 <h2>Status</h2>
 <div class="card" id="status">laden…</div>
@@ -150,15 +164,17 @@ td,th{border-bottom:1px solid #ddd;padding:.3rem;text-align:left}
 
 <script>
 const $=id=>document.getElementById(id);
-async function jget(u){const r=await fetch(u);const b=await r.json();if(!r.ok)throw new Error(b.error||r.status);return b}
-async function jpost(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});const d=await r.json();if(!r.ok)throw new Error(d.error||r.status);return d}
+async function jget(u){const r=await fetch(u);if(r.status===401){location='/login';throw new Error('login vereist')}const b=await r.json();if(!r.ok)throw new Error(b.error||r.status);return b}
+async function jpost(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});if(r.status===401){location='/login';throw new Error('login vereist')}const d=await r.json();if(!r.ok)throw new Error(d.error||r.status);return d}
+async function uitloggen(){try{await jpost('/api/logout',{})}catch(e){}location='/login'}
 async function ping(){try{await jget('/api/status');$('ping').textContent='✓ verbonden'}catch(e){$('ping').textContent='✗ '+e}}
 async function load(){
  try{
-  const s=await jget('/api/status');
-   $('status').innerHTML='Toestand: <b>'+s.state+'</b><br>Tijd: '+s.now.slice(11,19)
-   +'<br>Volgende alarm: '+(s.next_alarm?s.next_alarm.slice(0,16).replace('T',' '):'uit')
-   +'<br>Lamp: '+(s.lamp_on?'aan':'uit')+' · Speaker: '+(s.speaker_playing?'aan':'uit');
+   const s=await jget('/api/status');
+    $('status').innerHTML='Toestand: <b>'+s.state+'</b><br>Tijd: '+s.now.slice(11,19)
+    +' ('+s.timezone+')'
+    +'<br>Volgende alarm: '+(s.next_alarm?s.next_alarm.slice(0,16).replace('T',' '):'uit')
+    +'<br>Lamp: '+(s.lamp_on?'aan':'uit')+' · Speaker: '+(s.speaker_playing?'aan':'uit');
   const c=await jget('/api/settings');
   $('settings').textContent=JSON.stringify(c,null,1);
   $('f_time').value=c.alarm.time;$('f_lampdur').value=c.lamp.duration_after_button;
@@ -207,14 +223,60 @@ async function save(){
 load();setInterval(load,3000);
 </script></body></html>"""
 
+LOGIN_HTML = """<!doctype html><html lang="nl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wekker login</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:420px;margin:3rem auto;padding:0 1rem}
+.card{background:#f6f6f6;border-radius:.6rem;padding:1rem}
+.row{display:flex;gap:.5rem;margin:.5rem 0}
+button,input{font-size:1rem;padding:.55rem .7rem;border-radius:.5rem;border:1px solid #bbb}
+button.primary{background:#0a6cff;color:#fff;border-color:#0a6cff}
+#msg{color:#b00020}
+</style>
+</head><body>
+<h1>Aventus Wekker</h1>
+<div class="card">
+<h2>Inloggen (prototype)</h2>
+<div class="row"><label>Gebruiker <input id="f_user" autocomplete="username"></label></div>
+<div class="row"><label>Wachtwoord <input id="f_pass" type="password" autocomplete="current-password"></label></div>
+<div class="row"><button class="primary" onclick="login()">Inloggen</button></div>
+<p id="msg"></p>
+</div>
+<script>
+async function login(){
+ const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({username:document.getElementById('f_user').value,
+   password:document.getElementById('f_pass').value})});
+ if(r.ok){location='/'}else{
+  let m='Inloggen mislukt';
+  try{m=(await r.json()).error||m}catch(e){}
+  document.getElementById('msg').textContent=m;
+ }
+}
+</script></body></html>"""
 
-def _send(handler: BaseHTTPRequestHandler, code: int, payload: object) -> None:
+
+def _send(handler: BaseHTTPRequestHandler, code: int, payload: object,
+          extra_headers: list[tuple[str, str]] | None = None) -> None:
     body = json.dumps(payload).encode("utf-8")
     handler.send_response(code)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Content-Length", str(len(body)))
+    for naam, waarde in extra_headers or []:
+        handler.send_header(naam, waarde)
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def _session_cookie_header(token: str) -> str:
+    max_age = int(SESSION_TTL.total_seconds())
+    return (f"{SESSION_COOKIE}={token}; Path=/; Max-Age={max_age}; "
+            "HttpOnly; SameSite=Lax")
+
+
+def _cleared_cookie_header() -> str:
+    return f"{SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
 
 
 def _apply_settings(ctx: AppContext, patch: dict) -> dict:
@@ -342,7 +404,15 @@ def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
             data["lamp_timer_active"] = ctx.button.lamp_timer_active
             data["speaker_playing"] = ctx.core.speaker_playing
             data["agenda_stale"] = ctx.cache.is_stale(ctx.clock.now())
+            data["timezone"] = ctx.settings.locale.timezone
+            data["region"] = ctx.settings.locale.region
             return data
+
+        def _session_token(self) -> str | None:
+            return parse_cookies(self.headers.get("Cookie")).get(SESSION_COOKIE)
+
+        def _logged_in(self) -> bool:
+            return ctx.sessions.valid(self._session_token())
 
         def _base_url(self) -> str:
             host, port = self.server.server_address[:2]
@@ -374,6 +444,17 @@ def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
         def do_GET(self) -> None:
             path = urlparse(self.path).path
             try:
+                if path == "/login":
+                    _send_html(self, LOGIN_HTML)
+                    return
+                if not self._logged_in():
+                    if path == "/":
+                        self.send_response(302)
+                        self.send_header("Location", "/login")
+                        self.end_headers()
+                        return
+                    _send(self, 401, {"error": "Inloggen vereist."})
+                    return
                 if path == "/":
                     body = INDEX_HTML.encode("utf-8")
                     self.send_response(200)
@@ -432,6 +513,24 @@ def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
             path = urlparse(self.path).path
             try:
                 body = self._read_json()
+                if path == "/api/login":
+                    try:
+                        token = ctx.sessions.login(body.get("username"),
+                                                   body.get("password"))
+                    except WebAuthError as exc:
+                        _send(self, 401, {"error": str(exc)})
+                        return
+                    _send(self, 200, {"ok": True},
+                          extra_headers=[("Set-Cookie", _session_cookie_header(token))])
+                    return
+                if path == "/api/logout":
+                    ctx.sessions.logout(self._session_token())
+                    _send(self, 200, {"ok": True},
+                          extra_headers=[("Set-Cookie", _cleared_cookie_header())])
+                    return
+                if not self._logged_in():
+                    _send(self, 401, {"error": "Inloggen vereist."})
+                    return
                 if path == "/api/settings":
                     _send(self, 200, _apply_settings(ctx, body))
                 elif path == "/api/alarm/dismiss":
@@ -514,6 +613,9 @@ def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
             # Alias voor POST /api/settings (oudere clients); canoniek is POST.
             path = urlparse(self.path).path
             try:
+                if not self._logged_in():
+                    _send(self, 401, {"error": "Inloggen vereist."})
+                    return
                 if path != "/api/settings":
                     _send(self, 404, {"error": "Onbekend endpoint"})
                     return

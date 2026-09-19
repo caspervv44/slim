@@ -123,8 +123,8 @@ Het dashboard toont status (SLEEPING/RINGING/DISMISSED), huidige tijd,
 volgend alarm, agenda-provider en verbinding. Verder: wektijd/speaker/lamp/
 lampduur instellen, lamp en speaker testen, alarm afhandelen, agenda-provider
 kiezen (mock of OSIRIS–ROC Aventus met demo-login), koppelstatus bekijken en
-agenda-syncstatus bekijken. Lokaal prototype zonder inlog; **niet** zonder
-meer op een open netwerk zetten (geen authenticatie/TLS in deze versie).
+agenda-syncstatus bekijken. Prototype met login (development: casper/casper);
+**niet** zonder meer op een open netwerk zetten (geen TLS in deze versie).
 
 ## Touchscreen-GUI (800x480)
 

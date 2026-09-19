@@ -124,6 +124,39 @@ def test_alarmwijziging_past_alleen_tekst_aan(monkeypatch):
     assert not time_label.destroyed
 
 
+def test_agenda_rijwijziging_hergebruikt_widgets(monkeypatch):
+    from wekker.gui.screens import AgendaRow
+
+    data = GuiData(
+        main=MainScreenData(time_str="07:32", alarm_str="07:30"),
+        agenda=AgendaScreenData(
+            provider_name="OSIRIS",
+            day_label="Vandaag",
+            rows=(AgendaRow(time_str="09:00", subject="Wiskunde"),),
+            simulated=True,
+        ),
+    )
+    app = _make_app(monkeypatch, data)
+    app._nav.go_left()  # naar agenda-scherm
+    app.render()
+    rij_label = app._widgets["rows"][0]
+    titel = app._widgets["title"]
+
+    data.agenda = AgendaScreenData(
+        provider_name="OSIRIS",
+        day_label="Vandaag",
+        rows=(AgendaRow(time_str="09:00", subject="Nederlands"),),
+        simulated=True,
+    )
+    layout = app.render()
+
+    assert layout["screen"] == "agenda"
+    assert app._widgets["rows"][0] is rij_label, "rij-widget moet hergebruikt worden"
+    assert app._widgets["title"] is titel
+    assert rij_label.text == "09:00  Nederlands"
+    assert not rij_label.destroyed
+
+
 def test_schermwissel_bouwt_opnieuw_op(monkeypatch):
     data = _data_main()
     app = _make_app(monkeypatch, data)

@@ -28,6 +28,11 @@ ALLOWED_NIGHT_MODES = frozenset({"off", "dim"})
 #: Schoolplatformen die de setup-app mag aanbieden. Alleen "mock" heeft een
 #: werkende adapter; de rest is voorbereid maar "nog niet beschikbaar".
 ALLOWED_PROVIDERS = frozenset({"mock", "magister", "somtoday", "osiris", "myx"})
+#: Standaardtijdzone van de wekker (Nederland). DST wordt automatisch door
+#: zoneinfo afgehandeld; er wordt nergens een vaste UTC-offset gehanteerd.
+DEFAULT_TIMEZONE = "Europe/Amsterdam"
+#: Standaardregio (ISO 3166-1 alpha-2).
+DEFAULT_REGION = "NL"
 
 
 class SettingsError(ValueError):
@@ -154,11 +159,47 @@ class AgendaSettings:
 
 
 @dataclass
+class LocaleSettings:
+    """Taal-/tijdinstellingen. De systeemklok blijft de bron van waarheid;
+    deze sectie legt vast in welke zone de wekker hoort te draaien."""
+
+    timezone: str = DEFAULT_TIMEZONE
+    region: str = DEFAULT_REGION
+
+    def __post_init__(self) -> None:
+        self.timezone = _check_timezone(self.timezone)
+        self.region = _check_region(self.region)
+
+
+def _check_timezone(value: str) -> str:
+    """Valideer een IANA-tijdzonenaam via zoneinfo (DST automatisch)."""
+    if not isinstance(value, str) or not value:
+        raise SettingsError(f"locale.timezone moet een naam zijn, kreeg {value!r}")
+    try:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    except ImportError as exc:
+        raise SettingsError("zoneinfo niet beschikbaar op deze Python") from exc
+    try:
+        ZoneInfo(value)
+    except ZoneInfoNotFoundError as exc:
+        raise SettingsError(f"locale.timezone onbekend: {value!r}") from exc
+    return value
+
+
+def _check_region(value: str) -> str:
+    """Valideer een ISO 3166-1 alpha-2 regiocode (bv. 'NL')."""
+    if not isinstance(value, str) or len(value) != 2 or not value.isalpha():
+        raise SettingsError(f"locale.region moet een 2-lettercode zijn, kreeg {value!r}")
+    return value.upper()
+
+
+@dataclass
 class Settings:
     alarm: AlarmSettings = field(default_factory=AlarmSettings)
     lamp: LampSettings = field(default_factory=LampSettings)
     display: DisplaySettings = field(default_factory=DisplaySettings)
     agenda: AgendaSettings = field(default_factory=AgendaSettings)
+    locale: LocaleSettings = field(default_factory=LocaleSettings)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -169,7 +210,7 @@ class Settings:
             raise SettingsError(
                 f"Instellingen moeten een object zijn, kreeg {type(data).__name__}"
             )
-        onbekend = set(data) - {"alarm", "lamp", "display", "agenda"}
+        onbekend = set(data) - {"alarm", "lamp", "display", "agenda", "locale"}
         if onbekend:
             raise SettingsError(f"Onbekende secties: {sorted(onbekend)}")
         try:
@@ -178,6 +219,7 @@ class Settings:
                 lamp=LampSettings(**data.get("lamp", {})),
                 display=DisplaySettings(**data.get("display", {})),
                 agenda=AgendaSettings(**data.get("agenda", {})),
+                locale=LocaleSettings(**data.get("locale", {})),
             )
         except TypeError as exc:
             raise SettingsError(f"Onbekende instellingsleutel: {exc}") from exc

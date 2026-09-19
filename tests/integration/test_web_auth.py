@@ -34,22 +34,48 @@ def _ctx(tmp_path):
                       cache, sync, button, auth)
 
 
-def _req(server, methode, pad, body=None):
+def _req_raw(server, methode, pad, body=None, headers=None):
     url = f"http://127.0.0.1:{server.server_port}{pad}"
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=methode,
-                                 headers={"Content-Type": "application/json"})
+                                 headers=headers or {"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req) as resp:
-            return resp.status, json.loads(resp.read().decode())
+            return resp.status, json.loads(resp.read().decode()), resp.headers
     except urllib.error.HTTPError as exc:
-        return exc.code, json.loads(exc.read().decode())
+        return exc.code, json.loads(exc.read().decode()), exc.headers
 
 
-def _get_html(server, pad):
+_cookies: dict = {}
+
+
+def _login_cookie(server):
+    """Prototype-login (casper/casper); hergebruik de sessie per server."""
+    if server not in _cookies:
+        code, data, headers = _req_raw(server, "POST", "/api/login",
+                                       {"username": "casper", "password": "casper"})
+        assert code == 200, data
+        _cookies[server] = headers.get("Set-Cookie", "").split(";")[0]
+    return _cookies[server]
+
+
+def _req(server, methode, pad, body=None, cookie="auto"):
+    if cookie == "auto":
+        cookie = _login_cookie(server)
+    headers = {"Content-Type": "application/json"}
+    if cookie:
+        headers["Cookie"] = cookie
+    code, data, _ = _req_raw(server, methode, pad, body, headers)
+    return code, data
+
+
+def _get_html(server, pad, cookie="auto"):
+    if cookie == "auto":
+        cookie = _login_cookie(server)
+    url = f"http://127.0.0.1:{server.server_port}{pad}"
+    req = urllib.request.Request(url, headers={"Cookie": cookie} if cookie else {})
     try:
-        with urllib.request.urlopen(
-                f"http://127.0.0.1:{server.server_port}{pad}") as resp:
+        with urllib.request.urlopen(req) as resp:
             return resp.status, resp.read().decode()
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read().decode()
@@ -152,10 +178,24 @@ def test_dashboard_bevat_alle_onderdelen(tmp_path):
     ctx = _ctx(tmp_path)
     server = serve_forever(ctx, port=0)
     try:
+        # Zonder sessie: dashboard verwijst naar de loginpagina.
+        import http.client
+
+        conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        conn.request("GET", "/")
+        resp = conn.getresponse()
+        assert resp.status == 302
+        assert resp.getheader("Location") == "/login"
+        conn.close()
+        status, html = _get_html(server, "/login", cookie=None)
+        assert status == 200 and "Inloggen" in html
+        # Ingelogd: volledig dashboard.
         status, html = _get_html(server, "/")
         assert status == 200
         for marker in ("Aventus Wekker", "Status", "Volgende alarm", "Agenda",
-                       "Verbinding", "Lamp", "Speaker", "Instellingen"):
+                       "Verbinding", "Lamp", "Speaker", "Instellingen",
+                       "s.timezone", "Uitloggen"):
+            # s.timezone: dashboard toont de tijdzone bij de status (dynamisch).
             assert marker in html, marker
     finally:
         server.shutdown()

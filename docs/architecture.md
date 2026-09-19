@@ -32,7 +32,7 @@ deel uit van de eerste werkende versie.
 ```text
 src/wekker/
 ├── clock.py            Clock-protocol, SystemClock, FakeClock
-├── settings.py         Gevalideerde dataclasses (alarm/lamp/display/agenda)
+├── settings.py         Gevalideerde dataclasses (alarm/lamp/display/agenda/locale)
 ├── storage.py          JsonStore (atomair schrijven)
 ├── logging_config.py   Redactie van wachtwoorden/tokens in logs
 ├── hardware/

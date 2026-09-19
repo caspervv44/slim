@@ -33,16 +33,39 @@ def _ctx(tmp_path):
                       cache, sync, button, auth)
 
 
-def _req(server, methode, pad, body=None):
+def _req_raw(server, methode, pad, body=None, headers=None):
     url = f"http://127.0.0.1:{server.server_port}{pad}"
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=methode,
-                                 headers={"Content-Type": "application/json"})
+                                 headers=headers or {"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req) as resp:
-            return resp.status, json.loads(resp.read().decode())
+            return resp.status, json.loads(resp.read().decode()), resp.headers
     except urllib.error.HTTPError as exc:
-        return exc.code, json.loads(exc.read().decode())
+        return exc.code, json.loads(exc.read().decode()), exc.headers
+
+
+_cookies: dict = {}
+
+
+def _login_cookie(server):
+    """Prototype-login (casper/casper); hergebruik de sessie per server."""
+    if server not in _cookies:
+        code, data, headers = _req_raw(server, "POST", "/api/login",
+                                       {"username": "casper", "password": "casper"})
+        assert code == 200, data
+        _cookies[server] = headers.get("Set-Cookie", "").split(";")[0]
+    return _cookies[server]
+
+
+def _req(server, methode, pad, body=None, cookie="auto"):
+    if cookie == "auto":
+        cookie = _login_cookie(server)
+    headers = {"Content-Type": "application/json"}
+    if cookie:
+        headers["Cookie"] = cookie
+    code, data, _ = _req_raw(server, methode, pad, body, headers)
+    return code, data
 
 
 def test_api_settings_beheren(tmp_path):
@@ -81,8 +104,11 @@ def test_api_status_en_alarm(tmp_path):
         code, data = _req(server, "GET", "/api/status")
         assert code == 200
         for sleutel in ("state", "now", "next_alarm", "lamp_on",
-                        "lamp_timer_active", "speaker_playing", "agenda_stale"):
+                        "lamp_timer_active", "speaker_playing", "agenda_stale",
+                        "timezone", "region"):
             assert sleutel in data, sleutel
+        assert data["timezone"] == "Europe/Amsterdam"
+        assert data["region"] == "NL"
 
         # dismiss zonder actief alarm -> 409
         code, data = _req(server, "POST", "/api/alarm/dismiss", {})
