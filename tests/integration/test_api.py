@@ -194,10 +194,23 @@ def test_api_wijst_ongeldige_body_af(tmp_path):
                      headers={"Content-Type": "application/json"})
         assert conn.getresponse().status == 400
         conn.close()
-        conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
-        conn.request("POST", "/api/settings", body="x" * (64 * 1024 + 1),
-                     headers={"Content-Type": "application/json"})
-        assert conn.getresponse().status == 413
-        conn.close()
+        # Te grote body: de server antwoordt 413 zonder de body uit te lezen
+        # en verbreekt daarna de verbinding. Als de client dan nog aan het
+        # zenden is, kan getresponse() een ConnectionResetError geven —
+        # dat is een timingrace, geen fout: opnieuw proberen.
+        for poging in range(3):
+            conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+            try:
+                conn.request("POST", "/api/settings", body="x" * (64 * 1024 + 1),
+                             headers={"Content-Type": "application/json"})
+                assert conn.getresponse().status == 413
+                break
+            except (ConnectionError, http.client.RemoteDisconnected):
+                # ConnectionError dekt o.a. ConnectionAbortedError (WinError
+                # 10053), ConnectionResetError en ConnectionRefusedError af.
+                if poging == 2:
+                    raise
+            finally:
+                conn.close()
     finally:
         server.shutdown()
