@@ -8,3 +8,7 @@ build/
 *.egg-info/
 settings.local.json
 wekker-settings.json
+.env
+.env.*
+*.pem
+*.key

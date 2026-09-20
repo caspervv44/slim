@@ -24,6 +24,22 @@ Er is **nog geen echte Osiris- of Entree-koppeling**. Wat er wél is:
 5. Na succes komt de gebruiker terug bij de wekker (redirect-URI).
 6. De wekker wisselt de code voor tokens en gebruikt de agenda-API.
 
+## Lokale configuratie (environment, sinds deze versie)
+
+Echte OSIRIS-configuratie loopt uitsluitend via environment-variabelen, zodat
+er nooit geheimen in Git, logs of API-responses belanden. Alleen de NAMEN
+liggen vast in code (`agenda/osiris.py`) en hier; waarden levert de beheerder:
+
+- `WEKKER_OSIRIS_BASE_URL` — basis-URL van de officiële OSIRIS-API
+- `WEKKER_OSIRIS_CLIENT_ID` — Entree/OIDC client-ID van de schoolkoppeling
+- `WEKKER_OSIRIS_REDIRECT_URI` — redirect-URI zoals geregistreerd bij Entree
+
+`OsirisConfig.from_env()` valideert de aanwezigheid; de webapp toont onder
+Agenda of echte configuratie aanwezig is (`configured`) en zo niet, welke
+namen ontbreken (`missing`) — nooit waarden. `.env`-bestanden staan in
+`.gitignore`. Zolang configuratie ontbreekt, blijft de demo-flow (expliciet
+als demo gelabeld) de enige werkende stand en blijft Mock gewoon werken.
+
 ## Nog benodigde informatie (niets aangenomen)
 
 - [ ] Officiële Osiris-API voor ROC Aventus: base-URL, versie, documentatie.

@@ -201,6 +201,55 @@ def test_dashboard_bevat_alle_onderdelen(tmp_path):
         server.shutdown()
 
 
+def test_dashboard_doet_incrementele_updates_zonder_reload(tmp_path):
+    """Regressie: polling herbouwt de pagina niet (oude GUI-flicker-analogie).
+
+    - geen volledige page reload;
+    - formuliervelden worden alleen bij opstarten/Opslaan gevuld, nooit in de poll;
+    - per-veld spans voor live waarden; kaarten alleen bij gewijzigde inhoud.
+    """
+    ctx = _ctx(tmp_path)
+    server = serve_forever(ctx, port=0)
+    try:
+        status, html = _get_html(server, "/")
+        assert status == 200
+        assert "location.reload" not in html
+        # Eén provider-select (dubbele id was een bug) + per-veld spans.
+        assert html.count('id="f_prov"') == 1
+        for span in ("st_state", "st_time", "st_tz", "st_alarm", "st_lamp",
+                     "st_speaker", "st_agenda", "st_conn", "err"):
+            assert f'id="{span}"' in html, span
+        # Poll-lus roept tick() aan; formulier vullen gebeurt alleen in fillForm.
+        assert "setInterval(tick,3000)" in html
+        assert "fillForm();tick();setInterval(tick,3000);" in html
+        assert "s.timezone" in html
+    finally:
+        server.shutdown()
+
+
+def test_auth_status_bevat_osiris_configuratie(tmp_path, monkeypatch):
+    from wekker.agenda.osiris import REQUIRED_OSIRIS_ENV
+
+    for naam in REQUIRED_OSIRIS_ENV:
+        monkeypatch.delenv(naam, raising=False)
+    ctx = _ctx(tmp_path)
+    server = serve_forever(ctx, port=0)
+    try:
+        code, _ = _req(server, "POST", "/api/settings", {"agenda": {"provider": "osiris"}})
+        assert code == 200
+        code, data = _req(server, "GET", "/api/agenda/auth/status")
+        assert code == 200
+        assert data["configured"] is False
+        assert data["missing"] == list(REQUIRED_OSIRIS_ENV)
+        # Mock kent dit begrip niet maar meldt hetzelfde contract.
+        code, _ = _req(server, "POST", "/api/settings", {"agenda": {"provider": "mock"}})
+        assert code == 200
+        code, data = _req(server, "GET", "/api/agenda/auth/status")
+        assert data["configured"] is True and data["missing"] == []
+    finally:
+        server.shutdown()
+
+
 def test_gui_help_zonder_display(tmp_path):
     from wekker.main import main
 

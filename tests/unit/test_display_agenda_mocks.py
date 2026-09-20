@@ -247,6 +247,17 @@ def test_onbeschikbare_provider_sync_eerlijk():
     assert "nog niet beschikbaar" in (cache.error or "")
 
 
+def test_mock_om_dst_weekend_heen():
+    # DST-switch 2026-03-29 (zo): vrijdag ervoor CET (+1), maandag erna CEST (+2).
+    p = MockAgendaProvider()
+    vrijdag = p.fetch_day(date(2026, 3, 27))
+    maandag = p.fetch_day(date(2026, 3, 30))
+    assert len(vrijdag) == 4 and len(maandag) == 4
+    assert vrijdag[0].start.utcoffset() == timedelta(hours=1)
+    assert maandag[0].start.utcoffset() == timedelta(hours=2)
+    assert p.fetch_day(date(2026, 3, 29)) == []  # zondag blijft leeg
+
+
 def test_mock_invalid_input_geweigerd():
     lamp, display = MockLamp(), MockDisplay()
     with pytest.raises(ValueError):

@@ -42,6 +42,7 @@ from urllib.parse import parse_qs, urlparse
 from wekker.agenda.auth import AuthError, AuthService, MAX_STATE_LEN
 from wekker.agenda.cache import AgendaCache
 from wekker.agenda.models import SIMULATED_SOURCES
+from wekker.agenda.osiris import OsirisConfig
 from wekker.agenda.providers import (
     build_sync_provider,
     get_provider_info,
@@ -113,6 +114,7 @@ pre{background:#eee;padding:.7rem;overflow:auto;border-radius:.5rem;font-size:.8
 .badge{display:inline-block;background:#ffd75e;border-radius:.4rem;padding:.1rem .5rem;font-size:.8rem}
 table{border-collapse:collapse;width:100%;font-size:.9rem}
 td,th{border-bottom:1px solid #ddd;padding:.3rem;text-align:left}
+#err{color:#b00020}
 </style>
 </head><body>
 <h1>Aventus Wekker</h1>
@@ -121,7 +123,14 @@ td,th{border-bottom:1px solid #ddd;padding:.3rem;text-align:left}
 <button onclick="uitloggen()">Uitloggen</button></div>
 
 <h2>Status</h2>
-<div class="card" id="status">laden…</div>
+<div class="card">
+Toestand: <b id="st_state">laden…</b><br>Tijd: <span id="st_time">–</span> (<span id="st_tz">–</span>)
+<br>Volgende alarm: <span id="st_alarm">–</span>
+<br>Lamp: <span id="st_lamp">–</span> · Speaker: <span id="st_speaker">–</span>
+<br>Agenda: <span id="st_agenda">–</span>
+<br>Verbinding: <span id="st_conn">–</span>
+</div>
+<p id="err"></p>
 
 <h2>Lamp</h2>
 <div class="row">
@@ -156,54 +165,84 @@ td,th{border-bottom:1px solid #ddd;padding:.3rem;text-align:left}
 <pre id="settings">laden…</pre>
 
 <h2>Agenda</h2>
-<div class="row"><label>Provider <select id="f_prov"></select></label></div>
 <div class="card" id="auth">laden…</div>
 <div class="row"><button onclick="act('/api/agenda/auth/disconnect')">Koppeling verbreken</button></div>
 <div class="card" id="sync">laden…</div>
 <div id="agenda">laden…</div>
 
 <script>
+// Live updates zonder page reload: één pagina blijft bestaan; per tick worden
+// alleen veranderde teksten aangepast (setText) en zelden wijzigende kaarten
+// (auth/sync/agenda) alleen bij gewijzigde inhoud opnieuw opgebouwd. Het
+// instellingenformulier wordt ALLEEN bij opstarten en na Opslaan gevuld,
+// zodat typen nooit door polling wordt overschreven.
 const $=id=>document.getElementById(id);
+function setText(id,v){const e=$(id);if(e&&e.textContent!==v)e.textContent=v;}
 async function jget(u){const r=await fetch(u);if(r.status===401){location='/login';throw new Error('login vereist')}const b=await r.json();if(!r.ok)throw new Error(b.error||r.status);return b}
 async function jpost(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});if(r.status===401){location='/login';throw new Error('login vereist')}const d=await r.json();if(!r.ok)throw new Error(d.error||r.status);return d}
 async function uitloggen(){try{await jpost('/api/logout',{})}catch(e){}location='/login'}
-async function ping(){try{await jget('/api/status');$('ping').textContent='✓ verbonden'}catch(e){$('ping').textContent='✗ '+e}}
-async function load(){
+async function ping(){try{await jget('/api/status');setText('ping','✓ verbonden')}catch(e){setText('ping','✗ '+e)}}
+function renderAuth(a){
+ let h='Agenda: <b>'+a.provider_name+'</b> ('+a.school+')<br>';
+ if(a.linked){h+='Gekoppeld als '+a.account+(a.demo?' (demo)':'')}
+ else if(a.available&&a.login_label){h+='Niet gekoppeld. <button class="primary" onclick="link()">'+a.login_label+'</button>'}
+ else{h+='Nog niet beschikbaar voor dit platform.'}
+ if(a.provider==='osiris'&&!a.configured){h+='<br><span class="badge">demo</span> Geen echte OSIRIS-configuratie — zie docs/osiris-entree.md.'}
+ if($('auth').innerHTML!==h)$('auth').innerHTML=h;
+}
+function renderSync(g){
+ const h='Sync: '+g.status+(g.last_sync?' ('+g.last_sync.slice(0,16).replace('T',' ')+')':'')
+  +(g.stale?' · <b>mogelijk verouderd</b>':' · actueel')
+  +(g.error?'<br>Fout: '+g.error:'');
+ if($('sync').innerHTML!==h)$('sync').innerHTML=h;
+}
+function renderAgenda(a){
+ const h=(a.simulated?'<span class="badge">gesimuleerd (mock)</span> ':'')
+  +'<table>'+a.items.map(i=>'<tr><td>'+i.start_time.slice(11,16)+'</td><td>'+i.subject+'</td><td>'+i.location+'</td></tr>').join('')+'</table>';
+ if($('agenda').innerHTML!==h)$('agenda').innerHTML=h;
+}
+let lastAuth='',lastSync='',lastAgenda='';
+async function tick(){
  try{
-   const s=await jget('/api/status');
-    $('status').innerHTML='Toestand: <b>'+s.state+'</b><br>Tijd: '+s.now.slice(11,19)
-    +' ('+s.timezone+')'
-    +'<br>Volgende alarm: '+(s.next_alarm?s.next_alarm.slice(0,16).replace('T',' '):'uit')
-    +'<br>Lamp: '+(s.lamp_on?'aan':'uit')+' · Speaker: '+(s.speaker_playing?'aan':'uit');
-  const c=await jget('/api/settings');
-  $('settings').textContent=JSON.stringify(c,null,1);
-  $('f_time').value=c.alarm.time;$('f_lampdur').value=c.lamp.duration_after_button;
-  $('f_spk').checked=c.alarm.speaker_enabled;$('f_lamp').checked=c.lamp.on_with_alarm;
-  $('f_sound').value=c.alarm.sound;
-  const prov=$('f_prov');prov.innerHTML='';
-  const plist=await jget('/api/agenda/providers');
-  plist.providers.forEach(p=>{const o=document.createElement('option');o.value=p.id;
-   o.textContent=p.display_name+(p.available?'':' (later)');if(p.selected)o.selected=true;prov.appendChild(o)});
+  const s=await jget('/api/status');
+  setText('st_state',s.state);
+  setText('st_time',s.now.slice(11,19));
+  setText('st_tz',s.timezone);
+  setText('st_alarm',s.next_alarm?s.next_alarm.slice(0,16).replace('T',' '):'uit');
+  setText('st_lamp',s.lamp_on?'aan':'uit');
+  setText('st_speaker',s.speaker_playing?'aan':'uit');
   const astat=await jget('/api/agenda/auth/status');
-  $('status').innerHTML+='<br>Agenda: '+astat.provider_name+(astat.linked?' (gekoppeld)':'')
-   +'<br>Verbinding: verbonden';
-  let authHtml='Agenda: <b>'+astat.provider_name+'</b> ('+astat.school+')<br>';
-  if(astat.linked){authHtml+='Gekoppeld als '+astat.account+(astat.demo?' (demo)':'')}
-  else if(astat.available&&astat.login_label){authHtml+='Niet gekoppeld. <button class="primary" onclick="link()">'+astat.login_label+'</button>'}
-  else{authHtml+='Nog niet beschikbaar voor dit platform.'}
-  $('auth').innerHTML=authHtml;
+  setText('st_agenda',astat.provider_name+(astat.linked?' (gekoppeld)':''));
+  setText('st_conn','verbonden');
+  const sigA=JSON.stringify([astat.provider,astat.linked,astat.account,astat.demo,astat.available,astat.configured]);
+  if(sigA!==lastAuth){lastAuth=sigA;renderAuth(astat);}
   const gstat=await jget('/api/agenda/status');
-  $('sync').innerHTML='Sync: '+gstat.status+(gstat.last_sync?' ('+gstat.last_sync.slice(0,16).replace('T',' ')+')':'')
-   +(gstat.stale?' · <b>mogelijk verouderd</b>':' · actueel')
-   +(gstat.error?'<br>Fout: '+gstat.error:'');
+  const sigS=JSON.stringify(gstat);
+  if(sigS!==lastSync){lastSync=sigS;renderSync(gstat);}
   try{
    const a=await jget('/api/agenda/items');
-   $('agenda').innerHTML=(a.simulated?'<span class="badge">gesimuleerd (mock)</span> ':'')
-    +'<table>'+a.items.map(i=>'<tr><td>'+i.start_time.slice(11,16)+'</td><td>'+i.subject+'</td><td>'+i.location+'</td></tr>').join('')+'</table>';
-  }catch(e){$('agenda').textContent='Agenda: '+e}
- }catch(e){$('status').textContent='Fout: '+e}
+   const sigG=JSON.stringify(a);
+   if(sigG!==lastAgenda){lastAgenda=sigG;renderAgenda(a);}
+  }catch(e){
+   const m='Agenda: '+e.message;
+   if(m!==lastAgenda){lastAgenda=m;setText('agenda',m);}
+  }
+  setText('err','');
+ }catch(e){setText('err','Fout: '+e.message);}
 }
-async function act(u,b){try{await jpost(u,b)}catch(e){alert(e)}load()}
+async function fillForm(){
+ const c=await jget('/api/settings');
+ $('settings').textContent=JSON.stringify(c,null,1);
+ // Alleen hier (opstarten/na Opslaan) worden formuliervelden gevuld.
+ $('f_time').value=c.alarm.time;$('f_lampdur').value=c.lamp.duration_after_button;
+ $('f_spk').checked=c.alarm.speaker_enabled;$('f_lamp').checked=c.lamp.on_with_alarm;
+ $('f_sound').value=c.alarm.sound;
+ const prov=$('f_prov');prov.innerHTML='';
+ const plist=await jget('/api/agenda/providers');
+ plist.providers.forEach(p=>{const o=document.createElement('option');o.value=p.id;
+  o.textContent=p.display_name+(p.available?'':' (later)');if(p.selected)o.selected=true;prov.appendChild(o)});
+}
+async function act(u,b){try{await jpost(u,b)}catch(e){setText('err','Fout: '+e.message)}tick();}
 async function link(){
  try{
   // Sla eerst de gekozen provider op, start dan de login-flow.
@@ -211,16 +250,16 @@ async function link(){
   const f=await jpost('/api/agenda/auth/start',{});
   window.open(f.auth_url,'_blank');
   alert('Rond de login af in het geopende venster en druk daarna op OK.');
- }catch(e){alert(e)}
- load();
+ }catch(e){setText('err','Fout: '+e.message)}
+ tick();
 }
 async function save(){
  const body={alarm:{time:$('f_time').value,speaker_enabled:$('f_spk').checked,sound:$('f_sound').value},
   lamp:{duration_after_button:parseInt($('f_lampdur').value,10),on_with_alarm:$('f_lamp').checked},
   agenda:{provider:$('f_prov').value}};
- try{await jpost('/api/settings',body)}catch(e){alert(e)}load();
+ try{await jpost('/api/settings',body);await fillForm()}catch(e){setText('err','Fout: '+e.message)}tick();
 }
-load();setInterval(load,3000);
+fillForm();tick();setInterval(tick,3000);
 </script></body></html>"""
 
 LOGIN_HTML = """<!doctype html><html lang="nl"><head><meta charset="utf-8">
@@ -429,6 +468,12 @@ def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
                 return {"provider": provider_id, "error": "Onbekende provider"}
             link = ctx.auth.get_link(provider_id)
             auth_provider = ctx.auth.providers.get(provider_id)
+            # Echte OSIRIS-configuratie (alleen namen van ontbrekende vars,
+            # nooit waarden). Andere providers kennen dit begrip niet.
+            configured, missing = True, []
+            if provider_id == "osiris":
+                cfg = OsirisConfig.from_env()
+                configured, missing = cfg.configured, cfg.missing()
             return {
                 "provider": provider_id,
                 "provider_name": info.display_name,
@@ -439,6 +484,8 @@ def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
                 "account": link.account_label if link else None,
                 "demo": link.demo if link else False,
                 "login_label": auth_provider.login_label if auth_provider else None,
+                "configured": configured,
+                "missing": missing,
             }
 
         def do_GET(self) -> None:
