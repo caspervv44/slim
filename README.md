@@ -134,8 +134,9 @@ python -m wekker gui --window   # venster (development op laptop)
 ```
 
 Hoofdscherm met grote tijd + alarmtijd en `<`/`>`-pijlen; linker pijl opent
-het agendescherm (OSIRIS-lessen of demo-data met badge). Escape sluit af,
-Alt+Tab blijft werken. Details: `docs/touch-gui.md`.
+het agendescherm (OSIRIS-lessen of demo-data met badge). Op de Pi draait de GUI
+als echte kiosk (geen titlebar, geen desktop-panel); Escape sluit af.
+Details: `docs/touch-gui.md`.
 
 ## Tests draaien
 

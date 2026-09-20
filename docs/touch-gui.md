@@ -8,9 +8,11 @@ Raspberry Pi 5. Hoofdinterface van de fysieke wekker. Gebouwd met **tkinter**
 
 Belangrijkste eigenschappen:
 
-- Resolutie 800x480, fullscreen via het `-fullscreen`-attribuut — géén
-  `override-redirect`, dus de windowmanager blijft actief en **Alt+Tab werkt**.
-  De GUI vervangt de desktop niet.
+- Resolutie 800x480, echte kiosk: `overrideredirect(True)` (géén titlebar),
+  exacte geometrie `800x480+0+0`, plus `-fullscreen` en `-topmost`, zodat ook
+  het desktop-panel verdwijnt. Alleen `-fullscreen` bleek onvoldoende (een
+  hint die XWayland op de Pi negeert). Touch blijft werken; **Alt+Tab vervalt
+  in kiosk-modus**.
 - **Escape** sluit af (development/testen), **F11** schakelt fullscreen.
 - Grote tekst (klok ±130pt, pijlen ±56pt) en grote touch targets.
 - Rustig ontwerp: per scherm één onderwerp, geen overvolle interface.
@@ -62,5 +64,5 @@ terminal); de lamp gaat via de normale shutdown uit.
   (navigator, layouts, formattering, agenda-mapping, Runtime-koppeling).
 - Handmatig: `python -m wekker gui --window` — controleer klok, alarmtijd,
   beide pijlen, agendascherm met (demo-)lessen en Escape-afsluiting.
-- Op de Pi: `python3 -m wekker gui` — controleer fullscreen, touchrespons en
-  Alt+Tab naar de desktop en terug.
+- Op de Pi: `python3 -m wekker gui` — controleer of titlebar én desktop-panel
+  weg zijn (volledig 800x480), touchrespons van beide pijlen en Escape-afsluiting.

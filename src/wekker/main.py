@@ -232,7 +232,8 @@ def main(argv: list[str] | None = None) -> None:
 def run_gui(args: argparse.Namespace) -> None:
     """Start web-API + fullscreen touchscreen-GUI.
 
-    Op de Pi: ``python -m wekker gui`` (fullscreen 800x480, Alt+Tab werkt).
+    Op de Pi: ``python -m wekker gui`` (kiosk: volledig 800x480, geen
+    titlebar/panel; Alt+Tab vervalt, Escape sluit af).
     Development: ``python -m wekker gui --window``.
     """
     from wekker.gui.app import launch_gui

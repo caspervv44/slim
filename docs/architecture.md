@@ -142,8 +142,9 @@ Regels:
   `AgendaScreenData` (provider, dag, max. 5 lessen, simulated-badge) en
   `main_layout`/`agenda_layout` als pure data. Headless getest.
 - `app.py`: tkinter-renderer (lazy import, dus importeerbaar zonder display),
-  fullscreen 800x480 zonder override-redirect (Alt+Tab werkt), Escape sluit
-  af, F11 schakelt fullscreen, 1-seconde-loop (`run_once` + render).
+  kiosk 800x480 via overrideredirect + `-fullscreen`/`-topmost` (geen
+  titlebar/panel; Alt+Tab vervalt), Escape sluit af, F11 schakelt fullscreen,
+  1-seconde-loop (`run_once` + render).
 - Starten: `python -m wekker gui` (Pi, fullscreen + web-API),
   `python -m wekker gui --window` (development). Details: `docs/touch-gui.md`.
 

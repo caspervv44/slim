@@ -3,9 +3,13 @@
 Keuzes:
 - tkinter uit de stdlib: geen extra dependencies, werkt op Raspberry Pi OS
   en op de laptop (voor development met ``--window``).
-- Géén ``override-redirect``: het venster gebruikt ``-fullscreen`` zodat de
-  windowmanager actief blijft en Alt+Tab gewoon werkt. De GUI vervangt de
-  desktop niet.
+- Kiosk-modus op de Pi: ``overrideredirect(True)`` (géén titlebar/WM-randen),
+  exacte geometrie ``800x480+0+0`` plus ``-fullscreen`` en ``-topmost``, zodat
+  ook het desktop-panel verdwijnt. Alleen ``-fullscreen`` bleek onvoldoende:
+  dat is slechts een verzoek aan de windowmanager, dat onder XWayland
+  (Raspberry Pi OS) niet volledig wordt gehonoreerd. Touchscreen-aanrakingen
+  blijven werken (pointer-events, geen windowmanager nodig); Alt+Tab vervalt
+  in kiosk-modus.
 - Escape sluit af (development/testen), F11 schakelt fullscreen.
 - De app rendert layout-dicts uit ``wekker.gui.screens`` en leest alle data
   uit de bestaande Runtime (core/settings/agenda). Geen eigen alarm- of
@@ -254,11 +258,23 @@ def launch_gui(runtime: Any, fullscreen: bool = True) -> None:
         root = tk.Tk()
     except Exception as exc:
         raise SystemExit(f"Geen beeldscherm beschikbaar voor de GUI: {exc}") from exc
-    root.attributes("-fullscreen", bool(fullscreen))
-    if not fullscreen:
+    if fullscreen:
+        # Echte kiosk: geen WM-decoraties (titlebar) en exact 800x480
+        # linksboven, boven het desktop-panel. -fullscreen alleen is slechts
+        # een hint die XWayland op de Pi negeert; overrideredirect dwingt af.
+        # Touch blijft werken; Escape blijft de uitweg (Alt+Tab vervalt).
+        root.overrideredirect(True)
+        root.geometry(f"{SCREEN_WIDTH}x{SCREEN_HEIGHT}+0+0")
+        root.attributes("-fullscreen", True)
+        root.attributes("-topmost", True)
+        try:
+            root.focus_force()
+        except Exception:  # pragma: no cover - afhankelijk van backend
+            pass
+    else:
+        root.attributes("-fullscreen", False)
         root.geometry(f"{SCREEN_WIDTH}x{SCREEN_HEIGHT}")
-    # Escape = afsluiten (development/testen). Alt+Tab blijft werken omdat
-    # het venster een normaal fullscreen-venster is (geen override-redirect).
+    # Escape = afsluiten (development/testen).
     root.bind("<Escape>", lambda _e: app.stop())
     root.bind("<F11>", lambda _e: root.attributes(
         "-fullscreen", not bool(root.attributes("-fullscreen"))))
