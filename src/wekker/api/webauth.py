@@ -17,7 +17,7 @@ import hmac
 import logging
 import secrets
 import threading
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from wekker.clock import Clock
 
@@ -45,7 +45,7 @@ class SessionStore:
     def __init__(self, clock: Clock) -> None:
         self._clock = clock
         self._lock = threading.RLock()
-        self._tokens: dict[str, object] = {}
+        self._tokens: dict[str, datetime] = {}
 
     def login(self, username: object, password: object) -> str:
         """Controleer credentials; geef bij succes een sessietoken terug.
@@ -75,7 +75,7 @@ class SessionStore:
             verloopt = self._tokens.get(token)
             if verloopt is None:
                 return False
-            if self._clock.now() > verloopt:  # type: ignore[operator]
+            if self._clock.now() > verloopt:
                 del self._tokens[token]
                 return False
             return True
@@ -89,7 +89,7 @@ class SessionStore:
 
     def _prune_locked(self) -> None:
         now = self._clock.now()
-        verlopen = [t for t, tot in self._tokens.items() if now > tot]  # type: ignore[operator]
+        verlopen = [t for t, tot in self._tokens.items() if now > tot]
         for t in verlopen:
             del self._tokens[t]
 

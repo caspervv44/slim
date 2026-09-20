@@ -173,9 +173,10 @@ class TouchApp:
             self._widgets["empty"] = empty
         rows = []
         for row in layout["rows"]:
+            # wraplength: lange vaknamen mogen nooit buiten 800px vallen.
             label = tk.Label(self._frame, text=f'{row["time"]}  {row["subject"]}',
                              font=("DejaVu Sans", 32), fg="white", bg="black",
-                             anchor="w")
+                             anchor="w", justify="left", wraplength=620)
             label.pack(fill="x", padx=90)
             rows.append(label)
         self._widgets["rows"] = rows

@@ -177,3 +177,81 @@ def test_mocks_houden_toestand_bij():
     knop.press()
     assert gezien == ["knop"]
     assert knop.press_count == 1
+
+
+def test_mock_lessen_zijn_amsterdam_en_deterministisch():
+    from zoneinfo import ZoneInfo
+
+    p = MockAgendaProvider()
+    lessen = p.fetch_day(date(2026, 9, 14))  # maandag
+    assert all(str(les.start.tzinfo) == "Europe/Amsterdam" for les in lessen)
+    assert lessen[0].start.strftime("%H:%M") == "08:30"
+    # Zelfde weekdag een week later: zelfde rooster (deterministisch).
+    week_later = p.fetch_day(date(2026, 9, 21))
+    assert [(les.start.strftime("%H:%M"), les.subject) for les in week_later] == \
+        [(les.start.strftime("%H:%M"), les.subject) for les in lessen]
+    assert ZoneInfo("Europe/Amsterdam") is not None
+
+
+def test_cache_status_dict_en_grens_24u():
+    klok = FakeClock(datetime(2026, 9, 14, 7, 0, tzinfo=timezone.utc))
+    cache = AgendaCache()
+    sync = AgendaSyncService(MockAgendaProvider(), cache, klok)
+    assert sync.sync_today() is True
+    status = cache.status_dict()
+    assert status["status"] == "ok"
+    assert status["last_sync"] == klok.now().isoformat()
+    assert status["error"] is None
+    assert status["cached_days"] == ["2026-09-14"]
+    klok.advance(timedelta(hours=24))
+    assert cache.is_stale(klok.now()) is False  # grens: pas NA 24u stale
+    klok.advance(timedelta(seconds=1))
+    assert cache.is_stale(klok.now()) is True
+
+
+def test_cache_get_day_geeft_kopie():
+    cache = AgendaCache()
+    cache.put_day(date(2026, 9, 14), [_les()])
+    gekregen = cache.get_day(date(2026, 9, 14))
+    gekregen.clear()
+    assert len(cache.get_day(date(2026, 9, 14))) == 1  # cache onaangetast
+
+
+def test_sync_onverwachte_fout_houdt_cache():
+    class StukAdapter:
+        name = "stuk"
+
+        def fetch_day(self, day):
+            raise RuntimeError("alles kapot")
+
+    klok = FakeClock(datetime(2026, 9, 14, 7, 0, tzinfo=timezone.utc))
+    cache = AgendaCache()
+    cache.put_day(date(2026, 9, 14), [_les()])
+    sync = AgendaSyncService(StukAdapter(), cache, klok)  # type: ignore[arg-type]
+    assert sync.sync_day(date(2026, 9, 14)) is False
+    assert cache.status == "error"
+    assert "RuntimeError" in (cache.error or "")
+    assert len(cache.get_day(date(2026, 9, 14))) == 1  # oude data blijft
+    assert isinstance(cache.error, str) and len(cache.error) <= 200
+
+
+def test_onbeschikbare_provider_sync_eerlijk():
+    from wekker.agenda.providers import build_sync_provider
+
+    klok = FakeClock(datetime(2026, 9, 14, 7, 0, tzinfo=timezone.utc))
+    cache = AgendaCache()
+    sync = build_sync_provider("somtoday", cache, klok)
+    assert sync.provider_name == "somtoday"  # naam blijft herkenbaar
+    assert sync.sync_today() is False  # eerlijke fout, geen stille lege agenda
+    assert cache.status == "error"
+    assert "nog niet beschikbaar" in (cache.error or "")
+
+
+def test_mock_invalid_input_geweigerd():
+    lamp, display = MockLamp(), MockDisplay()
+    with pytest.raises(ValueError):
+        lamp.on(101)
+    with pytest.raises(ValueError):
+        display.set_brightness(-1)
+    with pytest.raises(ValueError):
+        MockSpeaker().play("", 50)

@@ -40,19 +40,19 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from wekker.agenda.auth import AuthError, AuthService, MAX_STATE_LEN
-from wekker.api.webauth import (
-    SESSION_COOKIE,
-    SESSION_TTL,
-    SessionStore,
-    WebAuthError,
-    parse_cookies,
-)
 from wekker.agenda.cache import AgendaCache
 from wekker.agenda.models import SIMULATED_SOURCES
 from wekker.agenda.providers import (
     build_sync_provider,
     get_provider_info,
     list_providers,
+)
+from wekker.api.webauth import (
+    SESSION_COOKIE,
+    SESSION_TTL,
+    SessionStore,
+    WebAuthError,
+    parse_cookies,
 )
 from wekker.agenda.sync import AgendaSyncService
 from wekker.alarm.core import AlarmClock

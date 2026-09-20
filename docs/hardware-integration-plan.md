@@ -118,7 +118,7 @@ alarmcyclus; acceptatie: zelfde toestandsverloop als de simulatie
   speaker, lamp, button) + fabrieksfunctie.
 - `--hardware pi|mock`-vlag in `main.build_default()` (mocks blijven default).
 - Display-regelbreedte en lamphelderheid afstemmen zodra de hardware bekend is.
-- Pas daarna: agenda-adapters, Wi-Fi-setup, LAN-authenticatie/TLS voor de setup-API.
+- Pas daarna: agenda-adapters, Wi-Fi-setup, productie-authenticatie/TLS voor de setup-API (prototype-login casper/casper bestaat al, alleen voor lokaal gebruik).
 
 **Niet doen:** pinnen gokken, display-/speakerd driver schrijven zonder
 onderdeeltype, hardware "werkend" noemen zonder fase-test, simulatie

@@ -2,7 +2,7 @@
 
 import json
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from wekker.agenda.cache import AgendaCache
 from wekker.agenda.auth import AuthService, MockEntreeAuth
@@ -179,6 +179,78 @@ def test_api_agenda(tmp_path):
 
         code, data = _req(server, "GET", "/api/lexisteert-niet")
         assert code == 404
+    finally:
+        server.shutdown()
+
+
+def test_api_locale_en_alarm_aan_uit(tmp_path):
+    ctx = _ctx(tmp_path)
+    server = serve_forever(ctx, port=0)
+    try:
+        # Tijdzone wijzigen via de API.
+        code, data = _req(server, "POST", "/api/settings",
+                           {"locale": {"timezone": "Europe/Amsterdam", "region": "NL"}})
+        assert code == 200 and data["locale"]["timezone"] == "Europe/Amsterdam"
+        code, data = _req(server, "POST", "/api/settings",
+                           {"locale": {"timezone": "UTC+1"}})
+        assert code == 400 and "error" in data
+        # Alarm uitzetten → geen volgend alarm meer.
+        code, data = _req(server, "POST", "/api/settings",
+                           {"alarm": {"enabled": False}})
+        assert code == 200
+        code, data = _req(server, "GET", "/api/status")
+        assert code == 200 and data["next_alarm"] is None
+        # Wektijd wijzigen → status volgt.
+        code, _ = _req(server, "POST", "/api/settings",
+                        {"alarm": {"enabled": True, "time": "06:15"}})
+        assert code == 200
+        code, data = _req(server, "GET", "/api/status")
+        assert data["next_alarm"] is not None and "06:15" in data["next_alarm"]
+    finally:
+        server.shutdown()
+
+
+def test_api_alarmcyclus_en_speaker_blokkade(tmp_path):
+    ctx = _ctx(tmp_path)
+    ctx.clock.set(datetime(2026, 9, 17, 7, 29, 50, tzinfo=timezone.utc))
+    server = serve_forever(ctx, port=0)
+    try:
+        # Alarm laten afgaan via echte core-ticks (run_once werkt op
+        # Runtime; hier volstaat de core-tick met vooruitgezette klok).
+        for _ in range(12):
+            ctx.core.tick()
+            ctx.clock.set(ctx.clock.now() + timedelta(seconds=1))
+        code, data = _req(server, "GET", "/api/status")
+        assert code == 200 and data["state"] == "ringing"
+        # Testgeluid geblokkeerd tijdens actief alarm.
+        code, data = _req(server, "POST", "/api/speaker/test", {})
+        assert code == 409
+        # Afhandelen via de API lukt en stopt speaker+lamp.
+        code, data = _req(server, "POST", "/api/alarm/dismiss", {})
+        assert code == 200 and data["ok"] is True and data["state"] == "dismissed"
+        code, data = _req(server, "GET", "/api/status")
+        assert data["speaker_playing"] is False and data["lamp_on"] is False
+    finally:
+        server.shutdown()
+
+
+def test_api_osiris_foutpaden(tmp_path):
+    ctx = _ctx(tmp_path)
+    server = serve_forever(ctx, port=0)
+    try:
+        # Login starten voor platform zonder login → 501, geen crash.
+        code, _ = _req(server, "POST", "/api/settings", {"agenda": {"provider": "somtoday"}})
+        assert code == 200
+        code, data = _req(server, "POST", "/api/agenda/auth/start", {})
+        assert code == 501 and "login" in data["error"].lower()
+        # Callback voor provider zonder login-mogelijkheid → 400.
+        code, _ = _req(server, "POST", "/api/settings", {"agenda": {"provider": "mock"}})
+        assert code == 200
+        code, data = _req(server, "POST", "/api/agenda/auth/callback", {"state": "abc"})
+        assert code == 400
+        # Verbreken zonder koppeling → was_linked False.
+        code, data = _req(server, "POST", "/api/agenda/auth/disconnect", {})
+        assert code == 200 and data["was_linked"] is False
     finally:
         server.shutdown()
 
