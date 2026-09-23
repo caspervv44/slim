@@ -73,7 +73,7 @@ class MockAgendaProvider:
         return lessen
 
 
-def create_provider(name: str, auth_store=None) -> AgendaProvider:
+def create_provider(name: str, auth_store=None, myx_auth=None) -> AgendaProvider:
     """Maak de adapter voor een gekozen schoolplatform.
 
     - ``"mock"``: altijd werkend, gesimuleerde gegevens.
@@ -93,6 +93,10 @@ def create_provider(name: str, auth_store=None) -> AgendaProvider:
                 "Osiris vereist een koppeling; er is geen auth-store beschikbaar."
             )
         return OsirisAgendaProvider(auth_store)
+    if name == "myx":
+        from wekker.agenda.myx import MyXAgendaProvider
+
+        return MyXAgendaProvider(config_loader=myx_auth.ensure_config if myx_auth else None)
     raise ProviderError(
         f"Agenda-provider {name!r} is nog niet beschikbaar; "
         "kies 'mock' voor gesimuleerde gegevens."
@@ -112,22 +116,22 @@ class _UnavailableProvider:
         )
 
 
-def create_provider_or_error(name: str, auth_store=None) -> AgendaProvider:
+def create_provider_or_error(name: str, auth_store=None, myx_auth=None) -> AgendaProvider:
     """Adapter bouwen zonder ooit te crashen: onbekende platforms geven een
     plaatshouder waarvan elke sync eerlijk mislukt (cache wordt error/stale).
     """
     try:
-        return create_provider(name, auth_store)
+        return create_provider(name, auth_store, myx_auth)
     except ProviderError:
         return _UnavailableProvider(name)
 
 
-def build_sync_provider(provider_id: str, cache, clock, auth_store=None):
+def build_sync_provider(provider_id: str, cache, clock, auth_store=None, myx_auth=None):
     """Maak een :class:`AgendaSyncService` voor een provider-id. Enige plek
     waar settings-providernaam → adaptervertaling gebeurt (main, API, tests)."""
     from wekker.agenda.sync import AgendaSyncService
 
-    return AgendaSyncService(create_provider_or_error(provider_id, auth_store),
+    return AgendaSyncService(create_provider_or_error(provider_id, auth_store, myx_auth),
                              cache, clock)
 
 
@@ -183,11 +187,11 @@ PROVIDER_INFOS: dict[str, ProviderInfo] = {
     ),
     "myx": ProviderInfo(
         id="myx",
-        display_name="MyX",
-        school="—",
-        auth="entree-oidc",
-        available=False,
-        description="Later toe te voegen provider.",
+        display_name="MyX / Xedule – Aventus",
+        school="Aventus",
+        auth="browser-sso",
+        available=True,
+        description="MyX-login op de wekker; tokens worden automatisch beheerd.",
     ),
 }
 

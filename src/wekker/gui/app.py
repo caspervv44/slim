@@ -32,6 +32,7 @@ from wekker.gui.screens import (
     ScreenId,
     build_agenda_data,
     build_main_data,
+    SettingsScreenData,
     layout_for,
 )
 
@@ -52,10 +53,23 @@ def build_gui_data(runtime: Any) -> GuiData:
         provider_name = get_provider_info(ctx.settings.agenda.provider).display_name
     except ValueError:
         provider_name = ctx.settings.agenda.provider
+    myx_status = (
+        ctx.myx_auth.status()
+        if getattr(ctx, "myx_auth", None) is not None
+        else {"linked": False, "token_valid": False, "busy": False, "account": "", "error": ""}
+    )
     return GuiData(
         main=build_main_data(now, ctx.core.next_alarm(now)),
         agenda=build_agenda_data(
             ctx.cache.get_day(now.date()), provider_name=provider_name,
+        ),
+        settings=SettingsScreenData(
+            provider=ctx.settings.agenda.provider,
+            linked=bool(myx_status.get("linked")),
+            token_valid=bool(myx_status.get("token_valid")),
+            busy=bool(myx_status.get("busy")),
+            account=str(myx_status.get("account") or ""),
+            error=str(myx_status.get("error") or ""),
         ),
     )
 
@@ -67,7 +81,10 @@ class TouchApp:
         self._root = root
         self._runtime = runtime
         self._nav = navigator or Navigator()
+        if navigator is None:
+            self._nav.register(ScreenId.SETTINGS)
         self._running = True
+        self._login_browser_visible = False
         root.title("Aventus Wekker")
         try:
             root.geometry(f"{SCREEN_WIDTH}x{SCREEN_HEIGHT}")
@@ -107,12 +124,21 @@ class TouchApp:
         opgebouwd, verder worden alleen veranderde teksten aangepast.
         """
         layout = layout_for(self._nav, build_gui_data(self._runtime))
+        if self._login_browser_visible and not layout.get("busy", False):
+            self._login_browser_visible = False
+            try:
+                self._root.deiconify()
+                self._root.focus_force()
+            except Exception:
+                pass
         if layout["screen"] != self._screen:
             self._rebuild(layout)
         elif layout["screen"] == ScreenId.MAIN.value:
             self._update_main(layout)
-        else:
+        elif layout["screen"] == ScreenId.AGENDA.value:
             self._update_agenda(layout)
+        else:
+            self._update_settings(layout)
         return layout
 
     def _rebuild(self, layout: dict) -> None:
@@ -122,8 +148,10 @@ class TouchApp:
         self._screen = layout["screen"]
         if layout["screen"] == ScreenId.MAIN.value:
             self._build_main(layout)
-        else:
+        elif layout["screen"] == ScreenId.AGENDA.value:
             self._build_agenda(layout)
+        else:
+            self._build_settings(layout)
 
     @staticmethod
     def _set_text(widget: Any, text: str) -> None:
@@ -145,6 +173,14 @@ class TouchApp:
         alarm_label.pack(pady=(10, 20))
         self._widgets["time"] = time_label
         self._widgets["alarm"] = alarm_label
+        if ScreenId.SETTINGS in getattr(self._nav, "_order", []):
+            settings_btn = tk.Button(
+                self._frame, text="⚙", font=("DejaVu Sans", 28),
+                fg="white", bg="#222222", activebackground="#444444",
+                command=lambda: self._go(ScreenId.SETTINGS.value),
+            )
+            settings_btn.place(relx=0.97, rely=0.05, anchor="ne")
+            self._widgets["settings_button"] = settings_btn
         self._render_arrows(layout)
 
     def _update_main(self, layout: dict) -> None:
@@ -200,6 +236,111 @@ class TouchApp:
             self._set_text(label, f'{row["time"]}  {row["subject"]}')
         # Pijlen zijn statisch per scherm; targets veranderen niet zonder
         # schermwissel, dus geen update nodig.
+
+    def _build_settings(self, layout: dict) -> None:
+        tk = self._tk()
+        title = tk.Label(
+            self._frame, text=layout["title"], font=("DejaVu Sans", 34),
+            fg="white", bg="black",
+        )
+        title.pack(pady=(18, 8))
+        provider = tk.Label(
+            self._frame, text="Rooster: MyX / Xedule", font=("DejaVu Sans", 22),
+            fg="#cccccc", bg="black",
+        )
+        provider.pack(pady=4)
+        status = tk.Label(
+            self._frame, text=layout["status"], font=("DejaVu Sans", 24),
+            fg="white", bg="black", wraplength=700,
+        )
+        status.pack(pady=(8, 4))
+        self._widgets["status"] = status
+        error = tk.Label(
+            self._frame, text=layout["error"], font=("DejaVu Sans", 16),
+            fg="#ff8a80", bg="black", wraplength=700,
+        )
+        error.pack(pady=(0, 8))
+        self._widgets["error"] = error
+
+        if not layout["busy"]:
+            connect = tk.Button(
+                self._frame, text=layout["connect_label"], font=("DejaVu Sans", 22),
+                fg="white", bg="#0a6cff", activebackground="#3388ff",
+                command=self._start_myx_login,
+            )
+            connect.pack(pady=8)
+            self._widgets["connect"] = connect
+        if layout["linked"] and not layout["busy"]:
+            disconnect = tk.Button(
+                self._frame, text="MyX ontkoppelen", font=("DejaVu Sans", 17),
+                fg="white", bg="#333333", activebackground="#555555",
+                command=self._disconnect_myx,
+            )
+            disconnect.pack(pady=4)
+            self._widgets["disconnect"] = disconnect
+        self._render_arrows(layout)
+
+    def _update_settings(self, layout: dict) -> None:
+        # Busy/link-status bepaalt welke knoppen bestaan; bij zo'n structurele
+        # wijziging bouwen we dit kleine scherm opnieuw op.
+        has_connect = "connect" in self._widgets
+        has_disconnect = "disconnect" in self._widgets
+        if (has_connect == bool(layout["busy"])
+                or has_disconnect != bool(layout["linked"] and not layout["busy"])):
+            self._rebuild(layout)
+            return
+        self._set_text(self._widgets["status"], layout["status"])
+        self._set_text(self._widgets["error"], layout["error"])
+        if "connect" in self._widgets:
+            self._set_text(self._widgets["connect"], layout["connect_label"])
+
+    def _activate_myx_provider(self) -> None:
+        """Selecteer MyX zonder een token ooit in Settings te schrijven."""
+        ctx = self._runtime.ctx
+        if ctx.settings.agenda.provider == "myx":
+            return
+        nieuwe = ctx.settings.update_from_dict({"agenda": {"provider": "myx"}})
+        ctx.settings = nieuwe
+        ctx.core.update_settings(nieuwe)
+        ctx.display.update_settings(nieuwe)
+        ctx.button.update_settings(nieuwe)
+        from wekker.agenda.providers import build_sync_provider
+
+        ctx.sync = build_sync_provider("myx", ctx.cache, ctx.clock, ctx.auth, ctx.myx_auth)
+        ctx.store.save(nieuwe.to_dict())
+
+    def _start_myx_login(self) -> None:
+        ctx = self._runtime.ctx
+        manager = getattr(ctx, "myx_auth", None)
+        if manager is None:
+            log.error("MyX-authmanager ontbreekt")
+            return
+        try:
+            self._activate_myx_provider()
+            started = manager.start_interactive()
+        except Exception:
+            log.exception("MyX-login starten faalde")
+            self.render()
+            return
+        if started:
+            self._login_browser_visible = True
+            # Geef het ingebouwde scherm tijdelijk volledig aan Chromium. De
+            # tkinter-loop blijft op de achtergrond draaien en komt terug zodra
+            # Chromium na succesvolle login sluit.
+            try:
+                self._root.withdraw()
+            except Exception:
+                pass
+
+    def _disconnect_myx(self) -> None:
+        manager = getattr(self._runtime.ctx, "myx_auth", None)
+        if manager is None:
+            return
+        try:
+            manager.disconnect(clear_browser_session=True)
+        except Exception:
+            log.exception("MyX ontkoppelen faalde")
+        self.render()
 
     def _render_arrows(self, layout: dict) -> None:
         tk = self._tk()

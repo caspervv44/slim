@@ -31,8 +31,10 @@ def test_register_bevat_alle_platformen():
     assert infos["osiris"].school == "ROC Aventus"
     assert infos["osiris"].auth == "entree-oidc"
     assert infos["osiris"].available is True
-    for later in ("somtoday", "magister", "myx"):
+    for later in ("somtoday", "magister"):
         assert infos[later].available is False
+    assert infos["myx"].available is True
+    assert infos["myx"].auth == "browser-sso"
     with pytest.raises(ValueError):
         get_provider_info("hogwarts")
 
@@ -45,7 +47,7 @@ def test_mock_blijft_werken():
 
 
 def test_onbeschikbare_providers_geven_duidelijke_fout():
-    for naam in ("somtoday", "magister", "myx"):
+    for naam in ("somtoday", "magister"):
         with pytest.raises(ProviderError) as exc:
             create_provider(naam)
         assert "nog niet beschikbaar" in str(exc.value)

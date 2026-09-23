@@ -43,6 +43,8 @@ from wekker.agenda.auth import AuthError, AuthService, MAX_STATE_LEN
 from wekker.agenda.cache import AgendaCache
 from wekker.agenda.models import SIMULATED_SOURCES
 from wekker.agenda.osiris import OsirisConfig
+from wekker.agenda.myx import MyXConfig
+from wekker.agenda.myx_auth import MyXAuthError, MyXAuthManager
 from wekker.agenda.providers import (
     build_sync_provider,
     get_provider_info,
@@ -96,6 +98,7 @@ class AppContext:
     # bestaande constructie (ook in tests) blijft werken; de productiecode
     # gebruikt dezelfde SystemClock als de rest van de Runtime.
     sessions: SessionStore = field(default_factory=lambda: SessionStore(SystemClock()))
+    myx_auth: MyXAuthManager | None = None
 
 
 INDEX_HTML = """<!doctype html><html lang="nl"><head><meta charset="utf-8">
@@ -184,7 +187,14 @@ async function uitloggen(){try{await jpost('/api/logout',{})}catch(e){}location=
 async function ping(){try{await jget('/api/status');setText('ping','✓ verbonden')}catch(e){setText('ping','✗ '+e)}}
 function renderAuth(a){
  let h='Agenda: <b>'+a.provider_name+'</b> ('+a.school+')<br>';
- if(a.linked){h+='Gekoppeld als '+a.account+(a.demo?' (demo)':'')}
+ if(a.provider==='myx'){
+   if(a.busy){h+='MyX-login is bezig op het scherm van de wekker…'}
+   else if(a.linked&&a.token_valid){h+='✓ Gekoppeld als '+(a.account||'Aventus-student')}
+   else if(a.linked){h+='MyX gekoppeld, maar opnieuw inloggen is nodig.'}
+   else{h+='Niet gekoppeld. <button class="primary" onclick="link()">Inloggen met Aventus / MyX</button>'}
+   if(a.expires_at&&a.token_valid){h+='<br>Token geldig tot '+a.expires_at.slice(0,16).replace('T',' ')}
+   if(a.auth_error){h+='<br>'+a.auth_error}
+ } else if(a.linked){h+='Gekoppeld als '+a.account+(a.demo?' (demo)':'')}
  else if(a.available&&a.login_label){h+='Niet gekoppeld. <button class="primary" onclick="link()">'+a.login_label+'</button>'}
  else{h+='Nog niet beschikbaar voor dit platform.'}
  if(a.provider==='osiris'&&!a.configured){h+='<br><span class="badge">demo</span> Geen echte OSIRIS-configuratie — zie docs/osiris-entree.md.'}
@@ -248,8 +258,12 @@ async function link(){
   // Sla eerst de gekozen provider op, start dan de login-flow.
   await jpost('/api/settings',{agenda:{provider:$('f_prov').value}});
   const f=await jpost('/api/agenda/auth/start',{});
-  window.open(f.auth_url,'_blank');
-  alert('Rond de login af in het geopende venster en druk daarna op OK.');
+  if(f.auth_url){
+    window.open(f.auth_url,'_blank');
+    alert('Rond de login af in het geopende venster en druk daarna op OK.');
+  }else{
+    setText('err',f.message||'Login geopend op het scherm van de wekker.');
+  }
  }catch(e){setText('err','Fout: '+e.message)}
  tick();
 }
@@ -327,7 +341,7 @@ def _apply_settings(ctx: AppContext, patch: dict) -> dict:
     ctx.button.update_settings(nieuwe)
     # Providerwissel: bouw de passende adapter (mock direct, osiris met
     # koppeling, overige eerlijk "nog niet beschikbaar").
-    ctx.sync = build_sync_provider(nieuwe.agenda.provider, ctx.cache, ctx.clock, ctx.auth)
+    ctx.sync = build_sync_provider(nieuwe.agenda.provider, ctx.cache, ctx.clock, ctx.auth, ctx.myx_auth)
     try:
         ctx.store.save(nieuwe.to_dict())
     except StorageError as exc:
@@ -344,6 +358,10 @@ def _is_connected(ctx: AppContext) -> bool:
         return True
     if provider_id == "osiris":
         return ctx.auth.is_linked("osiris")
+    if provider_id == "myx":
+        if ctx.myx_auth is not None:
+            return bool(ctx.myx_auth.status()["linked"])
+        return MyXConfig.from_env().configured
     return False
 
 
@@ -400,7 +418,16 @@ def _send_items(handler: BaseHTTPRequestHandler, ctx: AppContext) -> None:
             "action": "link",
         })
         return
-    if provider_id not in ("mock", "osiris"):
+    if provider_id == "myx":
+        cfg = MyXConfig.from_env()
+        if not cfg.configured:
+            _send(handler, 409, {
+                "error": "MyX is niet geconfigureerd. Ontbrekend: "
+                         + ", ".join(cfg.missing()),
+                "action": "configure-environment",
+            })
+            return
+    elif provider_id not in ("mock", "osiris"):
         _send(handler, 501, {
             "error": f"Provider {provider_id!r} nog niet "
                      "beschikbaar; kies 'mock' voor voorbeeldgegevens.",
@@ -474,18 +501,43 @@ def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
             if provider_id == "osiris":
                 cfg = OsirisConfig.from_env()
                 configured, missing = cfg.configured, cfg.missing()
+            elif provider_id == "myx":
+                if ctx.myx_auth is not None:
+                    myx_status = ctx.myx_auth.status()
+                    configured = bool(myx_status["linked"])
+                    missing = []
+                else:
+                    cfg = MyXConfig.from_env()
+                    configured, missing = cfg.configured, cfg.missing()
+            linked = link is not None
+            account = link.account_label if link else None
+            myx_status = None
+            if provider_id == "myx":
+                if ctx.myx_auth is not None:
+                    myx_status = ctx.myx_auth.status()
+                    linked = bool(myx_status["linked"])
+                    account = myx_status["account"]
+                else:
+                    linked = configured
+                    account = "lokale MyX-configuratie" if configured else None
             return {
                 "provider": provider_id,
                 "provider_name": info.display_name,
                 "school": info.school,
                 "auth": info.auth,
                 "available": info.available,
-                "linked": link is not None,
-                "account": link.account_label if link else None,
+                "linked": linked,
+                "account": account,
                 "demo": link.demo if link else False,
                 "login_label": auth_provider.login_label if auth_provider else None,
                 "configured": configured,
                 "missing": missing,
+                "token_valid": myx_status["token_valid"] if myx_status else None,
+                "needs_login": myx_status["needs_login"] if myx_status else None,
+                "busy": myx_status["busy"] if myx_status else False,
+                "auth_state": myx_status["state"] if myx_status else None,
+                "auth_error": myx_status["error"] if myx_status else None,
+                "expires_at": myx_status["expires_at"] if myx_status else None,
             }
 
         def do_GET(self) -> None:
@@ -520,7 +572,7 @@ def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
                     data["provider"] = ctx.sync.provider_name
                     data["available_providers"] = sorted(ALLOWED_PROVIDERS)
                     data["connected"] = _is_connected(ctx)
-                    data["linked"] = ctx.auth.is_linked(ctx.settings.agenda.provider)
+                    data["linked"] = _is_connected(ctx)
                     data["stale"] = ctx.cache.is_stale(ctx.clock.now())
                     _send(self, 200, data)
                 elif path == "/api/agenda/providers":
@@ -533,7 +585,13 @@ def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
                             "auth": info.auth,
                             "available": info.available,
                             "description": info.description,
-                            "linked": ctx.auth.is_linked(info.id),
+                            "linked": (
+                                bool(ctx.myx_auth.status()["linked"])
+                                if info.id == "myx" and ctx.myx_auth is not None
+                                else (MyXConfig.from_env().configured
+                                      if info.id == "myx"
+                                      else ctx.auth.is_linked(info.id))
+                            ),
                             "selected": info.id == ctx.settings.agenda.provider,
                         })
                     _send(self, 200, {"providers": items})
@@ -616,6 +674,20 @@ def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
                     except ValueError as exc:
                         _send(self, 400, {"error": str(exc)})
                         return
+                    if provider_id == "myx":
+                        if ctx.myx_auth is None:
+                            _send(self, 503, {"error": "MyX browser-login is niet geconfigureerd."})
+                            return
+                        started = ctx.myx_auth.start_interactive()
+                        _send(self, 202 if started else 409, {
+                            "ok": started,
+                            "started": started,
+                            "message": (
+                                "MyX-login is geopend op het scherm van de wekker."
+                                if started else "Er loopt al een MyX-login."
+                            ),
+                        })
+                        return
                     if info.auth == "none":
                         _send(self, 409, {"error": "Deze provider heeft geen login nodig."})
                         return
@@ -644,6 +716,14 @@ def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
                     _send(self, 200, {"ok": True, "account": link.account_label,
                                       "demo": link.demo})
                 elif path == "/api/agenda/auth/disconnect":
+                    if ctx.settings.agenda.provider == "myx" and ctx.myx_auth is not None:
+                        try:
+                            had = ctx.myx_auth.disconnect(clear_browser_session=True)
+                        except MyXAuthError as exc:
+                            _send(self, 409, {"error": str(exc)})
+                            return
+                        _send(self, 200, {"ok": True, "was_linked": had})
+                        return
                     had = ctx.auth.disconnect(ctx.settings.agenda.provider)
                     _send(self, 200, {"ok": True, "was_linked": had})
                 else:

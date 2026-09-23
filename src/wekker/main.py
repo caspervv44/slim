@@ -23,6 +23,7 @@ from pathlib import Path
 
 from wekker.agenda.auth import AuthService, MockEntreeAuth
 from wekker.agenda.cache import AgendaCache
+from wekker.agenda.myx_auth import MyXAuthManager
 from wekker.agenda.providers import build_sync_provider
 from wekker.alarm.core import AlarmClock
 from wekker.alarm.state import AlarmState
@@ -95,18 +96,20 @@ def build_default(settings_path: str | Path = "wekker-settings.json") -> Runtime
 
     core = AlarmClock(settings, clock, speaker, lamp, on_state_change=_wake_on_ring)
     auth = AuthService(clock, providers={"osiris": MockEntreeAuth(clock)})
+    myx_auth = MyXAuthManager()
     try:
-        sync = build_sync_provider(settings.agenda.provider, cache, clock, auth)
+        sync = build_sync_provider(settings.agenda.provider, cache, clock, auth, myx_auth)
     except Exception as exc:
         # Onbekend platform mag de start nooit blokkeren (zie sync-service).
         log.warning("agenda-provider niet beschikbaar, mock gebruikt: %s", exc)
-        sync = build_sync_provider("mock", cache, clock, auth)
+        sync = build_sync_provider("mock", cache, clock, auth, myx_auth)
     controller = ButtonController(core, lamp, display, clock, settings)
     # Eén fysieke button: eerst de controller (zet o.a. de melding), daarna
     # het display wekken zodat alles in één keer gerenderd wordt.
     button.on_press(controller.press)
     button.on_press(display.button_pressed)
-    ctx = AppContext(settings, store, clock, core, display, cache, sync, controller, auth)
+    ctx = AppContext(settings, store, clock, core, display, cache, sync, controller, auth,
+                     myx_auth=myx_auth)
     return Runtime(
         ctx=ctx,
         button=button,
@@ -166,7 +169,7 @@ def maybe_auto_sync(rt: Runtime) -> bool:
         if rt.ctx.clock.now() - last < timedelta(minutes=minutes):
             return False
     try:
-        return rt.ctx.sync.sync_today()
+        return rt.ctx.sync.sync_default_window()
     except Exception:
         log.exception("automatische agenda-sync faalde")
         return False

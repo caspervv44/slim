@@ -23,6 +23,7 @@ AGENDA_MAX_ROWS = 5
 class ScreenId(str, Enum):
     MAIN = "main"
     AGENDA = "agenda"
+    SETTINGS = "settings"
 
 
 class Navigator:
@@ -89,12 +90,25 @@ class AgendaScreenData:
     simulated: bool = True
 
 
+@dataclass(frozen=True)
+class SettingsScreenData:
+    """Alleen niet-geheime MyX-status voor het touchscreen."""
+
+    provider: str = "mock"
+    linked: bool = False
+    token_valid: bool = False
+    busy: bool = False
+    account: str = ""
+    error: str = ""
+
+
 @dataclass
 class GuiData:
     """Momentopname voor één render-slag (gebouwd uit Runtime in app.py)."""
 
     main: MainScreenData
     agenda: AgendaScreenData
+    settings: SettingsScreenData = SettingsScreenData()
     notices: tuple[str, ...] = ()
 
 
@@ -147,8 +161,34 @@ def agenda_layout(data: AgendaScreenData) -> dict:
     }
 
 
+
+def settings_layout(data: SettingsScreenData) -> dict:
+    """Studentvriendelijke MyX-koppeling; toont nooit tokens of wachtwoorden."""
+    if data.busy:
+        status = "Inloggen bij MyX…"
+    elif data.linked and data.token_valid:
+        status = f"Gekoppeld: {data.account or 'Aventus-student'}"
+    elif data.linked:
+        status = "Opnieuw inloggen bij MyX"
+    else:
+        status = "MyX is nog niet gekoppeld"
+    return {
+        "screen": ScreenId.SETTINGS.value,
+        "title": "Instellingen",
+        "provider": data.provider,
+        "status": status,
+        "error": data.error,
+        "linked": data.linked,
+        "busy": data.busy,
+        "connect_label": "Opnieuw inloggen" if data.linked else "MyX koppelen",
+        "left": _nav_button("<", ScreenId.AGENDA),
+        "right": _nav_button(">", ScreenId.MAIN),
+    }
+
 def layout_for(navigator: Navigator, data: GuiData) -> dict:
     """Layout voor het actieve scherm (aangestuurd door de Navigator)."""
     if navigator.current is ScreenId.AGENDA:
         return agenda_layout(data.agenda)
+    if navigator.current is ScreenId.SETTINGS:
+        return settings_layout(data.settings)
     return main_layout(data.main)

@@ -43,9 +43,9 @@ prototype start en werkt volledig zonder.
   alarmstatus (`ALARM!`), lessen/docent/lokaal en korte meldingen (bv. lamp),
   met auto-uit en nachtmodus (`off`/`dim`).
 - **Agenda** (`src/wekker/agenda/`): intern model (`Lesson` met `source`),
-  `AgendaProvider`-protocol + register (alleen `mock` werkt; Magister,
-  Somtoday, Osiris en MyX zijn kiesbaar maar melden eerlijk
-  "nog niet beschikbaar"), `AgendaCache` met stale-detectie en fouttolerante
+  `AgendaProvider`-protocol + register (`mock`, OSIRIS-demo en MyX/Xedule;
+  Magister en Somtoday melden eerlijk "nog niet beschikbaar"),
+  `AgendaCache` met stale-detectie en fouttolerante
   `AgendaSyncService`. Periodieke auto-sync volgens instelling.
 - **Instellingen + opslag**: gevalideerde dataclasses (`alarm`, `lamp`,
   `display`, `agenda`), atomair JSON-schrijven met fsync, terugval op defaults
@@ -59,8 +59,10 @@ prototype start en werkt volledig zonder.
   data uit de bestaande core/settings/agenda — geen eigen logica.
 - **Agenda-providers** (`src/wekker/agenda/`): register met mock,
   OSIRIS–ROC Aventus (demo-login ter voorbereiding op Entree) en
-  placeholders voor Somtoday/Magister/MyX. Auth-abstractie zonder
-  wachtwoorden.
+  placeholders voor Somtoday/Magister. MyX gebruikt een studentvriendelijke
+  browser-SSO op de Pi met een blijvend Chromium-profiel en automatische
+  tokenvernieuwing waar de bestaande SSO-sessie dat toelaat; zie
+  `docs/myx-xedule.md`. Het schoolwachtwoord wordt niet door de wekker opgeslagen.
 - **Tests**: unit + integratie (zie onder). Architectuur: `docs/architecture.md`.
 
 ## Vereisten
@@ -138,6 +140,21 @@ het agendescherm (OSIRIS-lessen of demo-data met badge). Op de Pi draait de GUI
 als echte kiosk (geen titlebar, geen desktop-panel); Escape sluit af.
 Details: `docs/touch-gui.md`.
 
+### MyX koppelen op het Pi-scherm
+
+Installeer op Raspberry Pi OS eerst Chromium en tkinter:
+
+```bash
+sudo apt update
+sudo apt install -y chromium python3-tk
+```
+
+Start daarna `python -m wekker gui`, tik rechtsboven op het tandwiel en kies
+**MyX koppelen**. Chromium opent de officiële Aventus/MyX-login op het
+ingebouwde scherm. Na succesvolle login komt de wekker automatisch terug.
+De student hoeft geen Bearer-token te zoeken. Zie `docs/myx-xedule.md` voor
+opslag, automatische vernieuwing en probleemoplossing.
+
 ## Tests draaien
 
 ```powershell
@@ -155,10 +172,10 @@ python -m compileall -q src tests
 
 Display, speaker, lamp en button (`src/wekker/hardware/mock.py`). GPIO-pinnen
 liggen nergens vast; echte drivers worden pas geschreven als de onderdelen
-fysiek zijn gecontroleerd. Agenda: alleen `mock` levert direct data; OSIRIS
-heeft een demo-login ter voorbereiding op Entree (zie
-`docs/osiris-entree.md`); Somtoday/Magister/MyX zijn placeholders. Er zijn
-**geen echte schoolkoppelingen en geen wachtwoorden** in dit project.
+fysiek zijn gecontroleerd. Agenda: `mock` levert voorbeelddata; MyX/Xedule kan echt via de browser-login
+op de Raspberry Pi worden gekoppeld. OSIRIS heeft een demo-login ter
+voorbereiding op Entree (zie `docs/osiris-entree.md`); Somtoday/Magister zijn
+nog placeholders. Er worden **geen schoolwachtwoorden** door de wekker opgeslagen.
 
 ## Wat morgen op de Raspberry Pi moet gebeuren
 
