@@ -200,4 +200,26 @@ Zie `docs/hardware-inventory.md` (wat is bekend/onbekend) en
 Alles: pinnummers voor button/lamp/speaker, display-interface (I2C/SPI/HAT +
 adres/bus), logica-niveaus en voedingsgegevens staan in
 `docs/hardware-inventory.md` als open checklist. Niets is vooraf ingevuld.
-"# slim" 
+"# slim"
+
+## Online beheer via veendomain.nl
+
+Bij de GUI-start registreert de wekker zich automatisch bij
+`https://veendomain.nl/klok/test2.pl`. Op de lokale pagina **Instellingen**
+verschijnen daarna een QR-code, de willekeurige beheerlink, gebruikersnaam
+`basis` en het eenmalige startwachtwoord.
+
+De wekker synchroniseert iedere 30 seconden alleen niet-geheime instellingen
+(alarm, lamp, display en tijd/regio). MyX-feedlinks, tokens en andere
+authenticatiegeheimen blijven uitsluitend lokaal op de Raspberry Pi.
+
+Voor een andere server-URL:
+
+```bash
+export WEKKER_CLOUD_URL='https://voorbeeld.nl/klok/test2.pl'
+```
+
+De lokale cloud-identiteit staat in `.wekker-cloud.json` naast het
+instellingenbestand en krijgt bestandsrechten `0600`. Verwijder dit bestand
+alleen als je bewust een nieuwe online beheerlink wilt laten aanmaken.
+

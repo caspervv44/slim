@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,6 +31,7 @@ from wekker.alarm.state import AlarmState
 from wekker.api.server import AppContext, serve_forever
 from wekker.button.controller import ButtonController
 from wekker.clock import SystemClock
+from wekker.cloud import CloudSettingsManager, DEFAULT_CLOUD_URL
 from wekker.display.manager import DisplayManager
 from wekker.hardware.interfaces import Button, DisplayDriver, Lamp, Speaker
 from wekker.hardware.mock import (
@@ -79,10 +81,19 @@ def load_settings(store: JsonStore) -> Settings:
         return default_settings()
 
 
-def build_default(settings_path: str | Path = "wekker-settings.json") -> Runtime:
+def build_default(
+    settings_path: str | Path = "wekker-settings.json", *, enable_cloud: bool = False
+) -> Runtime:
     store = JsonStore(settings_path)
     settings = load_settings(store)
-    clock = SystemClock()
+    clock = SystemClock(settings.locale.timezone)
+    cloud = None
+    if enable_cloud:
+        cloud_state_path = Path(settings_path).with_name(".wekker-cloud.json")
+        cloud = CloudSettingsManager(
+            base_url=os.environ.get("WEKKER_CLOUD_URL", DEFAULT_CLOUD_URL),
+            state_path=cloud_state_path,
+        )
     speaker, lamp = MockSpeaker(), MockLamp()
     display_driver = MockDisplay()
     button = MockButton()
@@ -108,8 +119,10 @@ def build_default(settings_path: str | Path = "wekker-settings.json") -> Runtime
     # het display wekken zodat alles in één keer gerenderd wordt.
     button.on_press(controller.press)
     button.on_press(display.button_pressed)
-    ctx = AppContext(settings, store, clock, core, display, cache, sync, controller, auth,
-                     myx_auth=myx_auth)
+    ctx = AppContext(
+        settings, store, clock, core, display, cache, sync, controller, auth,
+        myx_auth=myx_auth, cloud=cloud,
+    )
     return Runtime(
         ctx=ctx,
         button=button,
@@ -139,6 +152,7 @@ def run_once(rt: Runtime) -> None:
         log.exception("button-tick faalde; volgende seconde opnieuw geprobeerd")
     _update_display_context(rt)
     maybe_auto_sync(rt)
+    maybe_cloud_sync(rt)
 
 
 def _update_display_context(rt: Runtime) -> None:
@@ -173,6 +187,40 @@ def maybe_auto_sync(rt: Runtime) -> bool:
     except Exception:
         log.exception("automatische agenda-sync faalde")
         return False
+
+
+
+def maybe_cloud_sync(rt: Runtime) -> None:
+    """Synchroniseer veilige instellingen met de externe beheerpagina.
+
+    Netwerkverkeer draait in een achtergrondthread. Een ontvangen wijziging
+    wordt hier op de hoofdthread gevalideerd en atomair toegepast.
+    """
+    cloud = getattr(rt.ctx, "cloud", None)
+    if cloud is None:
+        return
+
+    patch = cloud.consume_remote_patch()
+    if patch:
+        try:
+            nieuwe = rt.ctx.settings.update_from_dict(patch)
+            rt.ctx.settings = nieuwe
+            rt.ctx.core.update_settings(nieuwe)
+            rt.ctx.display.update_settings(nieuwe)
+            rt.ctx.button.update_settings(nieuwe)
+            set_timezone = getattr(rt.ctx.clock, "set_timezone", None)
+            if callable(set_timezone):
+                set_timezone(nieuwe.locale.timezone)
+            rt.ctx.store.save(nieuwe.to_dict())
+            log.info("cloudinstellingen toegepast")
+        except Exception:
+            log.exception("cloudinstellingen waren ongeldig en zijn genegeerd")
+
+    try:
+        cloud.maybe_sync(rt.ctx.settings)
+    except Exception:
+        # Cloudbeheer is optioneel: een storing mag de wekker nooit blokkeren.
+        log.exception("cloudsync kon niet worden gestart")
 
 
 def shutdown(rt: Runtime) -> None:
@@ -215,7 +263,7 @@ def main(argv: list[str] | None = None) -> None:
         run_gui(args)
         return
     try:
-        rt = build_default(args.settings)
+        rt = build_default(args.settings, enable_cloud=True)
     except StorageError as exc:
         log.error("opslagfout: %s", exc)
         raise SystemExit(1) from exc
@@ -242,7 +290,7 @@ def run_gui(args: argparse.Namespace) -> None:
     from wekker.gui.app import launch_gui
 
     try:
-        rt = build_default(args.settings)
+        rt = build_default(args.settings, enable_cloud=True)
     except StorageError as exc:
         log.error("opslagfout: %s", exc)
         raise SystemExit(1) from exc

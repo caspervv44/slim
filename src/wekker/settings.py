@@ -33,6 +33,7 @@ ALLOWED_PROVIDERS = frozenset({"mock", "magister", "somtoday", "osiris", "myx"})
 DEFAULT_TIMEZONE = "Europe/Amsterdam"
 #: Standaardregio (ISO 3166-1 alpha-2).
 DEFAULT_REGION = "NL"
+ALLOWED_TIME_FORMATS = frozenset({"24h", "12h"})
 
 
 class SettingsError(ValueError):
@@ -165,10 +166,16 @@ class LocaleSettings:
 
     timezone: str = DEFAULT_TIMEZONE
     region: str = DEFAULT_REGION
+    time_format: str = "24h"
 
     def __post_init__(self) -> None:
         self.timezone = _check_timezone(self.timezone)
         self.region = _check_region(self.region)
+        if self.time_format not in ALLOWED_TIME_FORMATS:
+            raise SettingsError(
+                f"locale.time_format onbekend: {self.time_format!r} "
+                f"(kies uit {sorted(ALLOWED_TIME_FORMATS)})"
+            )
 
 
 def _check_timezone(value: str) -> str:

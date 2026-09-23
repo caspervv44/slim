@@ -1,23 +1,27 @@
 """Touchscreen-schermen als pure logica (geen tkinter hier).
 
-Dit moduletje beschrijft *wat* er op het 800x480-scherm staat als data
-(layout-dicts); ``wekker.gui.app`` rendert die naar tkinter-widgets. Zo is
-alle schermlogica en navigatie headless te testen, en kan later echte
-Osiris-data gebruikt worden zonder GUI-refactor: alleen de data verandert.
+Dit module beschrijft *wat* er op het 800x480-scherm staat als data.
+``wekker.gui.app`` rendert die data naar tkinter-widgets.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 
-#: Fysieke resolutie van het 5-inch touchscreen.
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 480
-
-#: Maximaal aantal lessen op het agendescherm (rustig ontwerp, grote tekst).
 AGENDA_MAX_ROWS = 5
+
+DUTCH_MONTHS = (
+    "", "januari", "februari", "maart", "april", "mei", "juni",
+    "juli", "augustus", "september", "oktober", "november", "december",
+)
+DUTCH_WEEKDAYS = (
+    "Maandag", "Dinsdag", "Woensdag", "Donderdag",
+    "Vrijdag", "Zaterdag", "Zondag",
+)
 
 
 class ScreenId(str, Enum):
@@ -27,12 +31,11 @@ class ScreenId(str, Enum):
 
 
 class Navigator:
-    """Schermvolgorde + pijl-navigatie. Uitbreidbaar: registreer extra
-    schermen en links/rechts bladert er automatisch doorheen (wrap)."""
+    """Schermvolgorde voor de drie lokale klokpagina's."""
 
     def __init__(self, screens: list[ScreenId] | None = None) -> None:
         self._order: list[ScreenId] = list(screens) if screens is not None else [
-            ScreenId.MAIN, ScreenId.AGENDA,
+            ScreenId.MAIN, ScreenId.AGENDA, ScreenId.SETTINGS,
         ]
         if not self._order:
             raise ValueError("Navigator heeft minimaal één scherm nodig")
@@ -43,7 +46,6 @@ class Navigator:
         return self._order[self._index]
 
     def register(self, screen: ScreenId) -> None:
-        """Voeg een scherm toe (later: instellingen, status, ...)."""
         if screen not in self._order:
             self._order.append(screen)
 
@@ -60,14 +62,27 @@ class Navigator:
         return self.current
 
 
-def format_time(moment: datetime) -> str:
-    """Grote klokweergave, bv. ``07:32``."""
+def format_time(moment: datetime, time_format: str = "24h") -> str:
+    """Formatteer de klok in 24-uurs- of 12-uursweergave."""
+    if time_format == "12h":
+        # Linux/Pi ondersteunt %-I; door handmatig te formatteren werkt dit
+        # ook op andere Python-platforms zonder voorloopnul.
+        hour = moment.hour % 12 or 12
+        suffix = "AM" if moment.hour < 12 else "PM"
+        return f"{hour}:{moment.minute:02d} {suffix}"
     return moment.strftime("%H:%M")
 
 
-def format_alarm(next_alarm: datetime | None) -> str:
-    """Alarmtijd of ``uit`` als er geen volgend alarm is."""
-    return next_alarm.strftime("%H:%M") if next_alarm else "uit"
+def format_alarm(next_alarm: datetime | None, time_format: str = "24h") -> str:
+    return format_time(next_alarm, time_format) if next_alarm else "uit"
+
+
+def format_day_label(day: date, today: date) -> str:
+    """Nederlandse kop voor de gekozen agendadag."""
+    datum = f"{day.day} {DUTCH_MONTHS[day.month]}"
+    if day == today:
+        return f"Vandaag - {datum}"
+    return f"{DUTCH_WEEKDAYS[day.weekday()]} - {datum}"
 
 
 @dataclass(frozen=True)
@@ -78,8 +93,16 @@ class MainScreenData:
 
 @dataclass(frozen=True)
 class AgendaRow:
+    # ``time_str`` blijft de starttijd heten voor backwards compatibility.
     time_str: str
     subject: str
+    end_str: str = ""
+    room: str = ""
+    teacher: str = ""
+
+    @property
+    def start_str(self) -> str:
+        return self.time_str
 
 
 @dataclass(frozen=True)
@@ -92,43 +115,72 @@ class AgendaScreenData:
 
 @dataclass(frozen=True)
 class SettingsScreenData:
-    """Alleen niet-geheime MyX-status voor het touchscreen."""
+    """Alleen lokale scherminstellingen; MyX-configuratie blijft in de webapp."""
 
+    timezone: str = "Europe/Amsterdam"
+    time_format: str = "24h"
+    region: str = "NL"
+    # Oude velden blijven als compatibiliteitsmarge aanwezig, maar worden
+    # bewust nergens op het lokale instellingen-scherm getoond.
     provider: str = "mock"
     linked: bool = False
     token_valid: bool = False
     busy: bool = False
     account: str = ""
     error: str = ""
+    cloud_ready: bool = False
+    cloud_url: str = ""
+    cloud_username: str = "basis"
+    cloud_password: str = ""
+    cloud_password_changed: bool = False
+    cloud_status: str = "Cloudkoppeling voorbereiden…"
+    cloud_error: str = ""
 
 
 @dataclass
 class GuiData:
-    """Momentopname voor één render-slag (gebouwd uit Runtime in app.py)."""
-
     main: MainScreenData
     agenda: AgendaScreenData
     settings: SettingsScreenData = SettingsScreenData()
     notices: tuple[str, ...] = ()
 
 
-def build_main_data(now: datetime, next_alarm: datetime | None) -> MainScreenData:
-    return MainScreenData(time_str=format_time(now), alarm_str=format_alarm(next_alarm))
+def build_main_data(
+    now: datetime,
+    next_alarm: datetime | None,
+    time_format: str = "24h",
+) -> MainScreenData:
+    return MainScreenData(
+        time_str=format_time(now, time_format),
+        alarm_str=format_alarm(next_alarm, time_format),
+    )
 
 
-def build_agenda_data(lessons: list, provider_name: str,
-                      day_label: str = "Vandaag") -> AgendaScreenData:
-    """Map generieke lessen (Lesson) naar agenda-regels. Werkt voor elke
-    provider: mock, Osiris-demo en later echte Osiris-data."""
+def build_agenda_data(
+    lessons: list,
+    provider_name: str,
+    day_label: str = "Vandaag",
+) -> AgendaScreenData:
+    """Map generieke lessen naar compacte maar volledige agenda-regels."""
     from wekker.agenda.models import SIMULATED_SOURCES
 
     rows = tuple(
-        AgendaRow(time_str=les.start.strftime("%H:%M"), subject=les.subject)
+        AgendaRow(
+            time_str=les.start.strftime("%H:%M"),
+            end_str=les.end.strftime("%H:%M"),
+            subject=les.subject,
+            room=les.room or "",
+            teacher=les.teacher or "",
+        )
         for les in sorted(lessons, key=lambda les: les.start)[:AGENDA_MAX_ROWS]
     )
     simulated = all(les.source in SIMULATED_SOURCES for les in lessons) if lessons else True
-    return AgendaScreenData(provider_name=provider_name, day_label=day_label,
-                            rows=rows, simulated=simulated)
+    return AgendaScreenData(
+        provider_name=provider_name,
+        day_label=day_label,
+        rows=rows,
+        simulated=simulated,
+    )
 
 
 def _nav_button(label: str, target: ScreenId) -> dict:
@@ -136,57 +188,60 @@ def _nav_button(label: str, target: ScreenId) -> dict:
 
 
 def main_layout(data: MainScreenData) -> dict:
-    """Layout hoofscherm: grote tijd, alarmtijd, pijlen links/rechts."""
     return {
         "screen": ScreenId.MAIN.value,
         "time": data.time_str,
         "alarm_label": "Alarm",
         "alarm": data.alarm_str,
-        "left": _nav_button("<", ScreenId.AGENDA),
+        "left": _nav_button("<", ScreenId.SETTINGS),
         "right": _nav_button(">", ScreenId.AGENDA),
     }
 
 
 def agenda_layout(data: AgendaScreenData) -> dict:
-    """Layout agendescherm: provider, dag, lessen, mock-badge, terug-pijl."""
     return {
         "screen": ScreenId.AGENDA.value,
         "title": data.provider_name,
+        "provider": data.provider_name,
         "day": data.day_label,
-        "rows": [{"time": r.time_str, "subject": r.subject} for r in data.rows],
-        "empty_text": "Geen lessen vandaag" if not data.rows else "",
+        "rows": [
+            {
+                "start": row.start_str,
+                "end": row.end_str,
+                "time": row.start_str,
+                "subject": row.subject,
+                "room": row.room,
+                "teacher": row.teacher,
+            }
+            for row in data.rows
+        ],
+        "empty_text": "Geen lessen op deze dag" if not data.rows else "",
         "simulated": data.simulated,
         "left": _nav_button("<", ScreenId.MAIN),
-        "right": _nav_button(">", ScreenId.MAIN),
+        "right": _nav_button(">", ScreenId.SETTINGS),
     }
 
 
-
 def settings_layout(data: SettingsScreenData) -> dict:
-    """Studentvriendelijke MyX-koppeling; toont nooit tokens of wachtwoorden."""
-    if data.busy:
-        status = "Inloggen bij MyX…"
-    elif data.linked and data.token_valid:
-        status = f"Gekoppeld: {data.account or 'Aventus-student'}"
-    elif data.linked:
-        status = "Opnieuw inloggen bij MyX"
-    else:
-        status = "MyX is nog niet gekoppeld"
     return {
         "screen": ScreenId.SETTINGS.value,
         "title": "Instellingen",
-        "provider": data.provider,
-        "status": status,
-        "error": data.error,
-        "linked": data.linked,
-        "busy": data.busy,
-        "connect_label": "Opnieuw inloggen" if data.linked else "MyX koppelen",
+        "timezone": data.timezone,
+        "time_format": data.time_format,
+        "region": data.region,
+        "cloud_ready": data.cloud_ready,
+        "cloud_url": data.cloud_url,
+        "cloud_username": data.cloud_username,
+        "cloud_password": data.cloud_password,
+        "cloud_password_changed": data.cloud_password_changed,
+        "cloud_status": data.cloud_status,
+        "cloud_error": data.cloud_error,
         "left": _nav_button("<", ScreenId.AGENDA),
         "right": _nav_button(">", ScreenId.MAIN),
     }
 
+
 def layout_for(navigator: Navigator, data: GuiData) -> dict:
-    """Layout voor het actieve scherm (aangestuurd door de Navigator)."""
     if navigator.current is ScreenId.AGENDA:
         return agenda_layout(data.agenda)
     if navigator.current is ScreenId.SETTINGS:

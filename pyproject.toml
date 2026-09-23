@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Aventus projectteam" }]
+dependencies = ["qrcode[pil]>=7.4,<9"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

@@ -38,6 +38,7 @@ import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+from typing import Any
 
 from wekker.agenda.auth import AuthError, AuthService, MAX_STATE_LEN
 from wekker.agenda.cache import AgendaCache
@@ -99,6 +100,8 @@ class AppContext:
     # gebruikt dezelfde SystemClock als de rest van de Runtime.
     sessions: SessionStore = field(default_factory=lambda: SessionStore(SystemClock()))
     myx_auth: MyXAuthManager | None = None
+    # Optionele externe opslag voor veilige, niet-geheime instellingen.
+    cloud: Any | None = None
 
 
 INDEX_HTML = """<!doctype html>
@@ -332,6 +335,9 @@ def _apply_settings(ctx: AppContext, patch: dict) -> dict:
     ctx.core.update_settings(nieuwe)
     ctx.display.update_settings(nieuwe)
     ctx.button.update_settings(nieuwe)
+    set_timezone = getattr(ctx.clock, "set_timezone", None)
+    if callable(set_timezone):
+        set_timezone(nieuwe.locale.timezone)
     # Providerwissel: bouw de passende adapter (mock direct, osiris met
     # koppeling, overige eerlijk "nog niet beschikbaar").
     ctx.sync = build_sync_provider(nieuwe.agenda.provider, ctx.cache, ctx.clock, ctx.auth, ctx.myx_auth)

@@ -87,3 +87,20 @@ def test_systemclock_is_timezone_aware():
     now = SystemClock().now()
     assert now.tzinfo is not None
     assert now.utcoffset() is not None
+
+
+def test_tijdformaat_wordt_gevalideerd():
+    assert default_settings().locale.time_format == "24h"
+    assert Settings.from_dict({"locale": {"time_format": "12h"}}).locale.time_format == "12h"
+    with pytest.raises(SettingsError):
+        Settings.from_dict({"locale": {"time_format": "militair"}})
+
+
+def test_systemclock_kan_tijdzone_runtime_wijzigen():
+    from wekker.clock import SystemClock
+
+    klok = SystemClock("UTC")
+    assert klok.now().tzname() == "UTC"
+    klok.set_timezone("Europe/Amsterdam")
+    assert klok.timezone_name == "Europe/Amsterdam"
+    assert klok.now().tzinfo is not None

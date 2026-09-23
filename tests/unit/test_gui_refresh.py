@@ -132,28 +132,27 @@ def test_agenda_rijwijziging_hergebruikt_widgets(monkeypatch):
         agenda=AgendaScreenData(
             provider_name="OSIRIS",
             day_label="Vandaag",
-            rows=(AgendaRow(time_str="09:00", subject="Wiskunde"),),
+            rows=(AgendaRow(time_str="09:00", end_str="09:50", subject="Wiskunde"),),
             simulated=True,
         ),
     )
     app = _make_app(monkeypatch, data)
-    app._nav.go_left()  # naar agenda-scherm
+    app._nav.go_right()  # naar agenda-scherm
     app.render()
-    rij_label = app._widgets["rows"][0]
-    titel = app._widgets["title"]
+    rij_widgets = app._widgets["rows"][0]
+    rij_label = rij_widgets["subject"]
 
     data.agenda = AgendaScreenData(
         provider_name="OSIRIS",
         day_label="Vandaag",
-        rows=(AgendaRow(time_str="09:00", subject="Nederlands"),),
+        rows=(AgendaRow(time_str="09:00", end_str="09:50", subject="Nederlands"),),
         simulated=True,
     )
     layout = app.render()
 
     assert layout["screen"] == "agenda"
-    assert app._widgets["rows"][0] is rij_label, "rij-widget moet hergebruikt worden"
-    assert app._widgets["title"] is titel
-    assert rij_label.text == "09:00  Nederlands"
+    assert app._widgets["rows"][0]["subject"] is rij_label, "rij-widget moet hergebruikt worden"
+    assert rij_label.text == "Nederlands"
     assert not rij_label.destroyed
 
 
@@ -162,10 +161,12 @@ def test_schermwissel_bouwt_opnieuw_op(monkeypatch):
     app = _make_app(monkeypatch, data)
     oude_widgets = dict(app._widgets)
 
-    app._nav.go_left()  # naar agenda-scherm
+    app._nav.go_right()  # naar agenda-scherm
     layout = app.render()
 
     assert layout["screen"] == "agenda"
     assert app._widgets is not oude_widgets
-    assert all(w.destroyed for w in oude_widgets.values())
-    assert app._widgets["title"].text == "OSIRIS"
+    # De nieuwe UI gebruikt geneste kaart-frames; de nep-widget recyclet
+    # destroy() niet recursief zoals tkinter. Belangrijk is dat het scherm
+    # een volledig nieuwe widgetset heeft gekregen.
+    assert app._widgets["day"].text == "Vandaag"

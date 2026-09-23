@@ -1,29 +1,43 @@
 """Tijdvoorziening achter een interface.
 
-De wekker-core mag nooit direct ``datetime.now()`` aanroepen, zodat tests
-met een neptijd deterministisch zijn en de Pi later een eigen bron
-(bv. RTC/NTP-gesynchroniseerde klok) kan injecteren.
+De productieklok kan een expliciete IANA-tijdzone gebruiken. Daardoor volgt
+de klokinstelling op het touchscreen niet per ongeluk de Linux-systeemzone.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Protocol
+from zoneinfo import ZoneInfo
 
 
 class Clock(Protocol):
-    """Minimale klok-interface voor de core en display."""
-
     def now(self) -> datetime:
         """Geef de huidige lokale tijd (timezone-aware)."""
         ...
 
 
 class SystemClock:
-    """Productieklok: de systeemklok van laptop of Raspberry Pi."""
+    """Productieklok met runtime-wijzigbare IANA-tijdzone."""
+
+    def __init__(self, timezone_name: str | None = None) -> None:
+        self._timezone_name = timezone_name
+        self._timezone = ZoneInfo(timezone_name) if timezone_name else None
+
+    @property
+    def timezone_name(self) -> str | None:
+        return self._timezone_name
+
+    def set_timezone(self, timezone_name: str) -> None:
+        # Validatie gebeurt al in Settings; ZoneInfo blijft hier bewust de
+        # laatste verdedigingslaag wanneer SystemClock los wordt gebruikt.
+        self._timezone = ZoneInfo(timezone_name)
+        self._timezone_name = timezone_name
 
     def now(self) -> datetime:
-        return datetime.now().astimezone()
+        if self._timezone is None:
+            return datetime.now().astimezone()
+        return datetime.now(self._timezone)
 
 
 class FakeClock:
