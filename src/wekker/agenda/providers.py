@@ -191,7 +191,7 @@ PROVIDER_INFOS: dict[str, ProviderInfo] = {
         school="Aventus",
         auth="browser-sso",
         available=True,
-        description="MyX-login op de wekker; tokens worden automatisch beheerd.",
+        description="MyX via permanente InternetCalendar-feed; browser-SSO blijft als fallback.",
     ),
 }
 

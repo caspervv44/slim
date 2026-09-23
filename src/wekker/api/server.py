@@ -101,178 +101,171 @@ class AppContext:
     myx_auth: MyXAuthManager | None = None
 
 
-INDEX_HTML = """<!doctype html><html lang="nl"><head><meta charset="utf-8">
+INDEX_HTML = """<!doctype html>
+<html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Wekker setup</title>
+<title>Aventus Wekker</title>
 <style>
-:root{color-scheme:light}
-body{font-family:system-ui,sans-serif;margin:0;padding:0 1rem 3rem;max-width:560px;margin-inline:auto}
-h1{font-size:1.4rem}h2{font-size:1.1rem;margin-top:1.5rem;border-top:1px solid #ddd;padding-top:1rem}
-.card{background:#f6f6f6;border-radius:.6rem;padding:.8rem;margin:.5rem 0}
-.row{display:flex;gap:.5rem;flex-wrap:wrap;margin:.4rem 0}
-button,input,select{font-size:1rem;padding:.55rem .7rem;border-radius:.5rem;border:1px solid #bbb}
-button{background:#fff}button:active{background:#e6e6e6}
-button.primary{background:#0a6cff;color:#fff;border-color:#0a6cff}
-pre{background:#eee;padding:.7rem;overflow:auto;border-radius:.5rem;font-size:.85rem}
-.badge{display:inline-block;background:#ffd75e;border-radius:.4rem;padding:.1rem .5rem;font-size:.8rem}
-table{border-collapse:collapse;width:100%;font-size:.9rem}
-td,th{border-bottom:1px solid #ddd;padding:.3rem;text-align:left}
-#err{color:#b00020}
-</style>
-</head><body>
-<h1>Aventus Wekker</h1>
-<p>De wekker werkt zelfstandig; deze pagina is alleen voor instellen. Prototype met login.</p>
-<div class="row"><button class="primary" onclick="ping()">Verbinding testen</button><span id="ping"></span>
-<button onclick="uitloggen()">Uitloggen</button></div>
+:root{
+  color-scheme:light;--blue:#2563eb;--blue2:#1d4ed8;--ink:#172033;--muted:#657087;
+  --line:#e4e8ef;--bg:#f4f7fb;--card:#fff;--green:#16845b;--amber:#a16207;--red:#b42318;
+  font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif
+}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink)}
+header{background:linear-gradient(135deg,#1d4ed8,#3b82f6);color:white;padding:24px 18px}
+.header-inner,.wrap{max-width:980px;margin:auto}.brand{font-size:1.45rem;font-weight:800;letter-spacing:-.02em}
+.subtitle{margin-top:5px;opacity:.9;font-size:.92rem}.wrap{padding:18px}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}.span-4{grid-column:span 4}.span-6{grid-column:span 6}.span-8{grid-column:span 8}.span-12{grid-column:span 12}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:0 5px 18px rgba(24,39,75,.05)}
+.card h2{font-size:1rem;margin:0 0 14px}.eyebrow{font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:700}
+.metric{font-size:1.55rem;font-weight:750;margin-top:4px}.muted{color:var(--muted)}.small{font-size:.86rem}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.stack{display:grid;gap:12px}
+label{display:grid;gap:6px;font-size:.86rem;font-weight:650;color:#3f4a60;flex:1;min-width:150px}
+input,select,button{font:inherit;border-radius:10px;border:1px solid #cfd6e2;padding:10px 12px}
+input,select{background:#fff;width:100%;color:var(--ink)}button{background:#fff;cursor:pointer;font-weight:650}
+button:hover{background:#f8fafc}button.primary{background:var(--blue);border-color:var(--blue);color:#fff}button.primary:hover{background:var(--blue2)}
+button.danger{color:var(--red)}button:disabled{opacity:.5;cursor:not-allowed}
+.pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 9px;font-size:.78rem;font-weight:700;background:#eef2f7;color:#4d596f}
+.pill.ok{background:#e8f7f1;color:var(--green)}.pill.warn{background:#fff6df;color:var(--amber)}.pill.bad{background:#feeceb;color:var(--red)}
+.dot{width:7px;height:7px;border-radius:50%;background:currentColor}.divider{height:1px;background:var(--line);margin:14px 0}
+.help{background:#f7f9fc;border:1px solid var(--line);border-radius:12px;padding:13px;font-size:.88rem;line-height:1.5}
+.steps{margin:8px 0 0;padding-left:20px}.steps li{margin:5px 0}
+.feed-box{display:grid;grid-template-columns:1fr auto;gap:8px}.feed-box input{min-width:0}
+#error{position:sticky;top:8px;z-index:20;display:none;background:#fff0ef;color:var(--red);border:1px solid #fecaca;padding:11px 14px;border-radius:10px;margin-bottom:12px}
+#success{display:none;background:#ebf8f2;color:var(--green);border:1px solid #b7e4cf;padding:11px 14px;border-radius:10px;margin-bottom:12px}
+.agenda-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
+.day{border-top:1px solid var(--line);padding:14px 0}.day:first-child{border-top:0;padding-top:0}.day-title{font-weight:750;margin-bottom:9px}
+.lesson{display:grid;grid-template-columns:88px 1fr auto;gap:12px;align-items:start;padding:11px 12px;background:#f8fafe;border:1px solid #e8edf5;border-radius:12px;margin:7px 0}
+.time{font-weight:800;color:var(--blue)}.subject{font-weight:750}.meta{font-size:.82rem;color:var(--muted);margin-top:3px}.room{font-size:.8rem;font-weight:700;background:#eef3ff;color:#315bbd;padding:5px 8px;border-radius:8px;white-space:nowrap}
+.empty{color:var(--muted);font-size:.88rem;padding:6px 0}
+details summary{cursor:pointer;font-weight:700}.danger-zone{border-color:#f3d1ce}
+pre{white-space:pre-wrap;word-break:break-word;background:#f7f9fc;border-radius:10px;padding:10px;font-size:.78rem}
+@media(max-width:760px){.span-4,.span-6,.span-8{grid-column:span 12}.lesson{grid-template-columns:72px 1fr}.room{grid-column:2}.feed-box{grid-template-columns:1fr}.wrap{padding:12px}}
+</style></head>
+<body>
+<header><div class="header-inner"><div class="brand">Aventus Wekker</div>
+<div class="subtitle">Instellen en MyX koppelen via je browser — het wekkerdisplay blijft alleen voor de wekker zelf.</div></div></header>
+<main class="wrap">
+<div id="error"></div><div id="err" style="display:none"></div><div id="success"></div>
 
-<h2>Status</h2>
-<div class="card">
-Toestand: <b id="st_state">laden…</b><br>Tijd: <span id="st_time">–</span> (<span id="st_tz">–</span>)
-<br>Volgende alarm: <span id="st_alarm">–</span>
-<br>Lamp: <span id="st_lamp">–</span> · Speaker: <span id="st_speaker">–</span>
-<br>Agenda: <span id="st_agenda">–</span>
-<br>Verbinding: <span id="st_conn">–</span>
-</div>
-<p id="err"></p>
+<div class="grid">
+<section class="card span-4"><div class="eyebrow">Wekker</div><div class="metric" id="st_time">--:--</div>
+<div class="small muted">Volgende alarm <b id="st_alarm">–</b> · <span id="st_tz" style="display:none"></span></div><div class="divider"></div>
+<div class="row"><span id="state_pill" class="pill"><span class="dot"></span><span id="st_state">laden</span></span>
+<span id="conn_pill" class="pill"><span class="dot"></span><span id="st_conn">verbinden…</span></span></div></section>
 
-<h2>Lamp</h2>
-<div class="row">
-<button onclick="act('/api/lamp/on',{duration_seconds:30})">Lamp 30 s aan</button>
-<button onclick="act('/api/lamp/off')">Lamp uit</button>
-<button onclick="act('/api/lamp/test')">Lamp testen</button>
-</div>
+<section class="card span-4"><div class="eyebrow">Agenda</div><div class="metric" id="st_agenda">–</div>
+<div class="small muted" id="st_sync">Nog niet gesynchroniseerd</div><div class="divider"></div>
+<button onclick="syncNow()">Nu synchroniseren</button></section>
 
-<h2>Speaker</h2>
-<div class="row"><button onclick="act('/api/speaker/test')">Testgeluid</button></div>
+<section class="card span-4"><div class="eyebrow">Hardware</div>
+<div class="row"><span class="pill">Lamp: <b id="st_lamp">–</b></span><span class="pill">Speaker: <b id="st_speaker">–</b></span></div>
+<div class="divider"></div><div class="row"><button onclick="act('/api/lamp/test')">Lamp testen</button><button onclick="act('/api/speaker/test')">Speaker testen</button></div></section>
 
-<h2>Alarm &amp; button</h2>
-<div class="row">
-<button onclick="act('/api/alarm/dismiss')">Alarm afhandelen</button>
-<button onclick="act('/api/button/press')">Button indrukken (simulatie)</button>
-</div>
+<section class="card span-12">
+<div class="agenda-head"><div><div class="eyebrow">Rooster</div><h2 style="margin:3px 0 0">Komende 7 dagen</h2></div>
+<span id="agenda_badge" class="pill">laden…</span></div>
+<div id="agenda">Rooster laden…</div>
+</section>
 
-<h2>Instellingen</h2>
-<div class="row">
-<label>Wektijd <input id="f_time" value="07:30" size="5"></label>
-<label>Lampduur na button (s) <input id="f_lampdur" value="30" size="4" inputmode="numeric"></label>
+<section class="card span-8">
+<div class="eyebrow">MyX / Xedule</div><h2 style="font-size:1.2rem;margin-top:4px">Rooster koppelen</h2>
+<div id="auth_summary" class="help">Status laden…</div>
+<div class="divider"></div>
+<div class="stack">
+<div>
+<strong>Aanbevolen: MyX Feed</strong>
+<div class="small muted" style="margin-top:4px">De feed is een blijvende agenda-abonnementlink. Daardoor hoeft de wekker niet iedere dag opnieuw in te loggen en is een tijdelijke Bearer-token niet nodig.</div>
 </div>
-<div class="row">
-<label><input type="checkbox" id="f_spk" checked> Speaker bij alarm</label>
-<label><input type="checkbox" id="f_lamp" checked> Lamp bij alarm</label>
+<div class="help">
+<b>Feedlink vinden in MyX</b>
+<ol class="steps">
+<li>Open <b>Mijn rooster</b> in MyX.</li>
+<li>Klik links naast “Mijn rooster” op de <b>drie puntjes</b>.</li>
+<li>Kies het <b>Feed</b>-icoon.</li>
+<li>Kopieer de link die met <code>webcal://aventus.myx.nl/api/InternetCalendar/feed/…</code> begint en plak hem hieronder.</li>
+</ol>
 </div>
-<div class="row">
-<label>Geluid <input id="f_sound" value="beep" size="8"></label>
-<label>Agenda <select id="f_prov"></select></label>
-</div>
-<div class="row"><button class="primary" onclick="save()">Opslaan</button></div>
-<pre id="settings">laden…</pre>
+<div class="feed-box"><input id="f_feed" autocomplete="off" spellcheck="false" placeholder="webcal://aventus.myx.nl/api/InternetCalendar/feed/…">
+<button class="primary" onclick="saveFeed()">Feed koppelen</button></div>
+<div class="small muted">De feedlink wordt alleen lokaal op de Raspberry Pi bewaard. Behandel hem als een geheim: wie de link heeft, kan mogelijk je rooster lezen.</div>
+<details><summary>Alternatief: eenmalig inloggen op het Pi-scherm</summary>
+<p class="small muted">Als het kopiëren van de Feed-link niet lukt, kan de webpagina de bestaande MyX-browserlogin op het Raspberry Pi-scherm starten. Deze methode gebruikt tijdelijk een Bearer-token en probeert de SSO-sessie te bewaren.</p>
+<button onclick="startPiLogin()">MyX-login op Pi starten</button>
+</details>
+</div></section>
 
-<h2>Agenda</h2>
-<div class="card" id="auth">laden…</div>
-<div class="row"><button onclick="act('/api/agenda/auth/disconnect')">Koppeling verbreken</button></div>
-<div class="card" id="sync">laden…</div>
-<div id="agenda">laden…</div>
+<section class="card span-4">
+<div class="eyebrow">Instellingen</div><h2 style="font-size:1.2rem;margin-top:4px">Wekker</h2>
+<div class="stack">
+<label>Wektijd<input id="f_time" type="time" value="07:30"></label>
+<label>Lampduur na knop (seconden)<input id="f_lampdur" type="number" min="1" max="3600" value="30"></label>
+<label>Geluid<input id="f_sound" value="beep"></label>
+<label><span><input type="checkbox" id="f_spk" style="width:auto"> Speaker bij alarm</span></label>
+<label><span><input type="checkbox" id="f_lamp" style="width:auto"> Lamp bij alarm</span></label>
+<label>Agenda-provider<select id="f_prov"></select></label>
+<button class="primary" onclick="saveSettings()">Instellingen opslaan</button>
+</div></section>
+
+<section class="card span-12 danger-zone">
+<details><summary>Beheer &amp; geavanceerd</summary>
+<div class="row" style="margin-top:12px"><button class="danger" onclick="disconnectAgenda()">MyX-koppeling verwijderen</button><button onclick="ping()">Verbinding testen</button><button onclick="uitloggen()">Uitloggen</button></div>
+<pre id="debug_settings" style="display:none"></pre>
+</details></section>
+</div>
+</main>
 
 <script>
-// Live updates zonder page reload: één pagina blijft bestaan; per tick worden
-// alleen veranderde teksten aangepast (setText) en zelden wijzigende kaarten
-// (auth/sync/agenda) alleen bij gewijzigde inhoud opnieuw opgebouwd. Het
-// instellingenformulier wordt ALLEEN bij opstarten en na Opslaan gevuld,
-// zodat typen nooit door polling wordt overschreven.
 const $=id=>document.getElementById(id);
-function setText(id,v){const e=$(id);if(e&&e.textContent!==v)e.textContent=v;}
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function jget(u){const r=await fetch(u);if(r.status===401){location='/login';throw new Error('login vereist')}const b=await r.json();if(!r.ok)throw new Error(b.error||r.status);return b}
 async function jpost(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});if(r.status===401){location='/login';throw new Error('login vereist')}const d=await r.json();if(!r.ok)throw new Error(d.error||r.status);return d}
-async function uitloggen(){try{await jpost('/api/logout',{})}catch(e){}location='/login'}
-async function ping(){try{await jget('/api/status');setText('ping','✓ verbonden')}catch(e){setText('ping','✗ '+e)}}
-function renderAuth(a){
- let h='Agenda: <b>'+a.provider_name+'</b> ('+a.school+')<br>';
- if(a.provider==='myx'){
-   if(a.busy){h+='MyX-login is bezig op het scherm van de wekker…'}
-   else if(a.linked&&a.token_valid){h+='✓ Gekoppeld als '+(a.account||'Aventus-student')}
-   else if(a.linked){h+='MyX gekoppeld, maar opnieuw inloggen is nodig.'}
-   else{h+='Niet gekoppeld. <button class="primary" onclick="link()">Inloggen met Aventus / MyX</button>'}
-   if(a.expires_at&&a.token_valid){h+='<br>Token geldig tot '+a.expires_at.slice(0,16).replace('T',' ')}
-   if(a.auth_error){h+='<br>'+a.auth_error}
- } else if(a.linked){h+='Gekoppeld als '+a.account+(a.demo?' (demo)':'')}
- else if(a.available&&a.login_label){h+='Niet gekoppeld. <button class="primary" onclick="link()">'+a.login_label+'</button>'}
- else{h+='Nog niet beschikbaar voor dit platform.'}
- if(a.provider==='osiris'&&!a.configured){h+='<br><span class="badge">demo</span> Geen echte OSIRIS-configuratie — zie docs/osiris-entree.md.'}
- if($('auth').innerHTML!==h)$('auth').innerHTML=h;
-}
-function renderSync(g){
- const h='Sync: '+g.status+(g.last_sync?' ('+g.last_sync.slice(0,16).replace('T',' ')+')':'')
-  +(g.stale?' · <b>mogelijk verouderd</b>':' · actueel')
-  +(g.error?'<br>Fout: '+g.error:'');
- if($('sync').innerHTML!==h)$('sync').innerHTML=h;
-}
+function msg(text,ok=false){const good=$('success'),bad=$('error');good.style.display='none';bad.style.display='none';const el=ok?good:bad;el.textContent=text;el.style.display='block';setTimeout(()=>{el.style.display='none'},6000)}
+function fmtDate(iso){const d=new Date(iso+'T12:00:00');return new Intl.DateTimeFormat('nl-NL',{weekday:'long',day:'numeric',month:'long'}).format(d)}
+function fmtTime(iso){return iso?iso.slice(11,16):'--:--'}
 function renderAgenda(a){
- const h=(a.simulated?'<span class="badge">gesimuleerd (mock)</span> ':'')
-  +'<table>'+a.items.map(i=>'<tr><td>'+i.start_time.slice(11,16)+'</td><td>'+i.subject+'</td><td>'+i.location+'</td></tr>').join('')+'</table>';
- if($('agenda').innerHTML!==h)$('agenda').innerHTML=h;
+  $('agenda_badge').textContent=a.simulated?'Voorbeelddata':(a.provider==='myx'?'MyX':'Agenda');
+  const days=a.days||[];
+  $('agenda').innerHTML=days.map(d=>{
+    const items=d.items||[];
+    return `<div class="day"><div class="day-title">${esc(fmtDate(d.date))}</div>`+
+      (items.length?items.map(i=>`<div class="lesson"><div class="time">${esc(fmtTime(i.start_time))}<div class="small muted">${esc(fmtTime(i.end_time))}</div></div><div><div class="subject">${esc(i.subject)}</div><div class="meta">${i.teacher?'Docent: '+esc(i.teacher):''}</div></div>${i.location?`<div class="room">${esc(i.location)}</div>`:''}</div>`).join(''):`<div class="empty">Geen lessen</div>`)+`</div>`;
+  }).join('');
 }
-let lastAuth='',lastSync='',lastAgenda='';
+function renderAuth(a){
+  let h='';
+  if(a.provider!=='myx'){h=`Huidige provider: <b>${esc(a.provider_name)}</b>`}
+  else if(a.feed_configured){h=`<span class="pill ok"><span class="dot"></span>MyX Feed gekoppeld</span><div class="small muted" style="margin-top:8px">De wekker kan het rooster automatisch ophalen zonder dagelijkse login.</div>`}
+  else if(a.linked&&a.token_valid){h=`<span class="pill ok"><span class="dot"></span>MyX gekoppeld</span><div class="small muted" style="margin-top:8px">${esc(a.account||'Aventus-student')} · browser-SSO</div>`}
+  else if(a.busy){h=`<span class="pill warn"><span class="dot"></span>Wachten op MyX-login op de Pi…</span>`}
+  else{h=`<span class="pill warn"><span class="dot"></span>Nog niet gekoppeld</span><div class="small muted" style="margin-top:8px">Gebruik bij voorkeur de Feed-koppeling hieronder.</div>`}
+  if(a.auth_error)h+=`<div class="small" style="color:var(--red);margin-top:7px">${esc(a.auth_error)}</div>`;
+  $('auth_summary').innerHTML=h;
+}
 async function tick(){
  try{
-  const s=await jget('/api/status');
-  setText('st_state',s.state);
-  setText('st_time',s.now.slice(11,19));
-  setText('st_tz',s.timezone);
-  setText('st_alarm',s.next_alarm?s.next_alarm.slice(0,16).replace('T',' '):'uit');
-  setText('st_lamp',s.lamp_on?'aan':'uit');
-  setText('st_speaker',s.speaker_playing?'aan':'uit');
-  const astat=await jget('/api/agenda/auth/status');
-  setText('st_agenda',astat.provider_name+(astat.linked?' (gekoppeld)':''));
-  setText('st_conn','verbonden');
-  const sigA=JSON.stringify([astat.provider,astat.linked,astat.account,astat.demo,astat.available,astat.configured]);
-  if(sigA!==lastAuth){lastAuth=sigA;renderAuth(astat);}
-  const gstat=await jget('/api/agenda/status');
-  const sigS=JSON.stringify(gstat);
-  if(sigS!==lastSync){lastSync=sigS;renderSync(gstat);}
-  try{
-   const a=await jget('/api/agenda/items');
-   const sigG=JSON.stringify(a);
-   if(sigG!==lastAgenda){lastAgenda=sigG;renderAgenda(a);}
-  }catch(e){
-   const m='Agenda: '+e.message;
-   if(m!==lastAgenda){lastAgenda=m;setText('agenda',m);}
-  }
-  setText('err','');
- }catch(e){setText('err','Fout: '+e.message);}
+  const [s,a,g]=await Promise.all([jget('/api/status'),jget('/api/agenda/auth/status'),jget('/api/agenda/status')]);
+  $('st_time').textContent=s.now.slice(11,16);$('st_tz').textContent=s.timezone;$('st_alarm').textContent=s.next_alarm?fmtTime(s.next_alarm):'uit';$('st_state').textContent=s.state;
+  $('st_lamp').textContent=s.lamp_on?'aan':'uit';$('st_speaker').textContent=s.speaker_playing?'aan':'uit';$('st_conn').textContent='verbonden';$('conn_pill').className='pill ok';
+  $('st_agenda').textContent=a.provider_name||a.provider;$('st_sync').textContent=g.last_sync?'Bijgewerkt '+g.last_sync.slice(0,16).replace('T',' '):'Nog niet gesynchroniseerd';
+  renderAuth(a);
+  try{renderAgenda(await jget('/api/agenda/items'))}catch(e){$('agenda').innerHTML=`<div class="empty">${esc(e.message)}</div>`}
+ }catch(e){$('st_conn').textContent='offline';$('conn_pill').className='pill bad'}
 }
 async function fillForm(){
- const c=await jget('/api/settings');
- $('settings').textContent=JSON.stringify(c,null,1);
- // Alleen hier (opstarten/na Opslaan) worden formuliervelden gevuld.
- $('f_time').value=c.alarm.time;$('f_lampdur').value=c.lamp.duration_after_button;
- $('f_spk').checked=c.alarm.speaker_enabled;$('f_lamp').checked=c.lamp.on_with_alarm;
- $('f_sound').value=c.alarm.sound;
- const prov=$('f_prov');prov.innerHTML='';
- const plist=await jget('/api/agenda/providers');
- plist.providers.forEach(p=>{const o=document.createElement('option');o.value=p.id;
-  o.textContent=p.display_name+(p.available?'':' (later)');if(p.selected)o.selected=true;prov.appendChild(o)});
-}
-async function act(u,b){try{await jpost(u,b)}catch(e){setText('err','Fout: '+e.message)}tick();}
-async function link(){
  try{
-  // Sla eerst de gekozen provider op, start dan de login-flow.
-  await jpost('/api/settings',{agenda:{provider:$('f_prov').value}});
-  const f=await jpost('/api/agenda/auth/start',{});
-  if(f.auth_url){
-    window.open(f.auth_url,'_blank');
-    alert('Rond de login af in het geopende venster en druk daarna op OK.');
-  }else{
-    setText('err',f.message||'Login geopend op het scherm van de wekker.');
-  }
- }catch(e){setText('err','Fout: '+e.message)}
- tick();
+  const c=await jget('/api/settings');$('f_time').value=c.alarm.time;$('f_lampdur').value=c.lamp.duration_after_button;$('f_spk').checked=c.alarm.speaker_enabled;$('f_lamp').checked=c.lamp.on_with_alarm;$('f_sound').value=c.alarm.sound;
+  const plist=await jget('/api/agenda/providers'),sel=$('f_prov');sel.innerHTML='';plist.providers.forEach(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.display_name+(p.available?'':' (later)');o.selected=p.selected;sel.appendChild(o)});
+ }catch(e){msg('Instellingen laden mislukt: '+e.message)}
 }
-async function save(){
- const body={alarm:{time:$('f_time').value,speaker_enabled:$('f_spk').checked,sound:$('f_sound').value},
-  lamp:{duration_after_button:parseInt($('f_lampdur').value,10),on_with_alarm:$('f_lamp').checked},
-  agenda:{provider:$('f_prov').value}};
- try{await jpost('/api/settings',body);await fillForm()}catch(e){setText('err','Fout: '+e.message)}tick();
-}
+async function saveSettings(){try{await jpost('/api/settings',{alarm:{time:$('f_time').value,speaker_enabled:$('f_spk').checked,sound:$('f_sound').value},lamp:{duration_after_button:Number($('f_lampdur').value),on_with_alarm:$('f_lamp').checked},agenda:{provider:$('f_prov').value}});msg('Instellingen opgeslagen.',true);await tick()}catch(e){msg(e.message)}}
+async function saveFeed(){try{const r=await jpost('/api/agenda/myx/feed',{feed_url:$('f_feed').value});$('f_feed').value='';msg(r.message||'MyX-feed gekoppeld.',true);await fillForm();await tick()}catch(e){msg('Feed koppelen mislukt: '+e.message)}}
+async function syncNow(){try{await jpost('/api/agenda/sync',{});msg('Rooster bijgewerkt.',true);await tick()}catch(e){msg('Synchroniseren mislukt: '+e.message)}}
+async function startPiLogin(){try{await jpost('/api/settings',{agenda:{provider:'myx'}});const r=await jpost('/api/agenda/auth/start',{});msg(r.message||'MyX-login geopend op de Raspberry Pi.',true);await fillForm();await tick()}catch(e){msg(e.message)}}
+async function disconnectAgenda(){if(!confirm('MyX-koppeling en opgeslagen browsersessie verwijderen?'))return;try{await jpost('/api/agenda/auth/disconnect',{});msg('MyX-koppeling verwijderd.',true);await tick()}catch(e){msg(e.message)}}
+async function act(u,b){try{await jpost(u,b||{});await tick()}catch(e){msg(e.message)}}
+async function ping(){try{await jget('/api/status');msg('Verbinding met de wekker is goed.',true)}catch(e){msg('Geen verbinding: '+e.message)}}
+async function uitloggen(){try{await jpost('/api/logout',{})}catch(e){}location='/login'}
 fillForm();tick();setInterval(tick,3000);
 </script></body></html>"""
 
@@ -419,12 +412,15 @@ def _send_items(handler: BaseHTTPRequestHandler, ctx: AppContext) -> None:
         })
         return
     if provider_id == "myx":
-        cfg = MyXConfig.from_env()
+        cfg = (
+            ctx.myx_auth.config(require_valid=False)
+            if ctx.myx_auth is not None
+            else MyXConfig.from_env()
+        )
         if not cfg.configured:
             _send(handler, 409, {
-                "error": "MyX is niet geconfigureerd. Ontbrekend: "
-                         + ", ".join(cfg.missing()),
-                "action": "configure-environment",
+                "error": "MyX is nog niet gekoppeld. Voeg via deze webpagina de MyX-feed toe.",
+                "action": "configure-feed",
             })
             return
     elif provider_id not in ("mock", "osiris"):
@@ -433,11 +429,25 @@ def _send_items(handler: BaseHTTPRequestHandler, ctx: AppContext) -> None:
                      "beschikbaar; kies 'mock' voor voorbeeldgegevens.",
         })
         return
-    lessen = ctx.cache.get_day(ctx.clock.now().date())
+    vandaag = ctx.clock.now().date()
+    lessen = ctx.cache.get_day(vandaag)
+    dagen = []
+    from datetime import timedelta
+    for offset in range(7):
+        dag = vandaag + timedelta(days=offset)
+        dag_lessen = ctx.cache.get_day(dag)
+        dagen.append({
+            "date": dag.isoformat(),
+            "items": [les.to_dict() for les in dag_lessen],
+        })
+    alle_lessen = [les for dag in dagen for les in dag["items"]]
     _send(handler, 200, {
-        "simulated": all(les.source in SIMULATED_SOURCES for les in lessen),
+        "simulated": all(
+            les.get("source") in SIMULATED_SOURCES for les in alle_lessen
+        ),
         "provider": provider_id,
         "items": [les.to_dict() for les in lessen],
+        "days": dagen,
     })
 
 
@@ -538,6 +548,8 @@ def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
                 "auth_state": myx_status["state"] if myx_status else None,
                 "auth_error": myx_status["error"] if myx_status else None,
                 "expires_at": myx_status["expires_at"] if myx_status else None,
+                "feed_configured": myx_status.get("feed_configured") if myx_status else False,
+                "connection_mode": myx_status.get("connection_mode") if myx_status else None,
             }
 
         def do_GET(self) -> None:
@@ -667,6 +679,37 @@ def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
                     ctx.core.sound_stop()
                     _send(self, 200, {"ok": True, "sound": ctx.settings.alarm.sound,
                                       "seconds": SPEAKER_TEST_SECONDS})
+                elif path == "/api/agenda/myx/feed":
+                    if ctx.myx_auth is None:
+                        _send(self, 503, {"error": "MyX-koppelservice is niet beschikbaar."})
+                        return
+                    feed_url = body.get("feed_url", "")
+                    try:
+                        ctx.myx_auth.save_feed(feed_url)
+                        # Selecteer MyX direct: de feed is nu de primaire koppeling.
+                        _apply_settings(ctx, {"agenda": {"provider": "myx"}})
+                        # Probeer meteen te synchroniseren zodat een foutieve of
+                        # ingetrokken feed direct zichtbaar wordt.
+                        ok = ctx.sync.sync_default_window()
+                    except (MyXAuthError, SettingsError) as exc:
+                        _send(self, 400, {"error": str(exc)})
+                        return
+                    if not ok:
+                        _send(self, 502, {
+                            "error": ctx.cache.error or "MyX-feed kon niet worden opgehaald."
+                        })
+                        return
+                    _send(self, 200, {"ok": True, "message": "MyX-feed gekoppeld."})
+                elif path == "/api/agenda/sync":
+                    ok = ctx.sync.sync_default_window()
+                    if ok:
+                        _send(self, 200, {"ok": True, **ctx.cache.status_dict()})
+                    else:
+                        _send(self, 502, {
+                            "ok": False,
+                            "error": ctx.cache.error or "Synchroniseren mislukt.",
+                            **ctx.cache.status_dict(),
+                        })
                 elif path == "/api/agenda/auth/start":
                     provider_id = ctx.settings.agenda.provider
                     try:

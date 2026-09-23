@@ -80,9 +80,9 @@ class TouchApp:
     def __init__(self, root: Any, runtime: Any, navigator: Navigator | None = None) -> None:
         self._root = root
         self._runtime = runtime
+        # Het ingebouwde display blijft bewust alleen klok + agenda.
+        # Configuratie gebeurt via de webinterface op poort 8080.
         self._nav = navigator or Navigator()
-        if navigator is None:
-            self._nav.register(ScreenId.SETTINGS)
         self._running = True
         self._login_browser_visible = False
         root.title("Aventus Wekker")

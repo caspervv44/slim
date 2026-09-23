@@ -41,6 +41,9 @@ class MyXConfig:
     bearer_token: str = ""
     att_id: str = ""
     calendar_url: str = DEFAULT_MYX_CALENDAR_URL
+    # Een MyX-feed is een stabiele iCalendar-abonnement-URL. Als die is
+    # ingesteld is er voor dagelijkse synchronisatie geen Bearer-token nodig.
+    feed_url: str = ""
 
     @classmethod
     def from_env(cls) -> "MyXConfig":
@@ -53,9 +56,11 @@ class MyXConfig:
 
     @property
     def configured(self) -> bool:
-        return bool(self.bearer_token and self.att_id)
+        return bool(self.feed_url or (self.bearer_token and self.att_id))
 
     def missing(self) -> list[str]:
+        if self.feed_url:
+            return []
         ontbrekend = []
         if not self.bearer_token:
             ontbrekend.append(ENV_MYX_BEARER_TOKEN)
@@ -276,23 +281,31 @@ class MyXAgendaProvider:
         if end_exclusive <= start:
             raise ProviderError("MyX-datumbereik moet minimaal één dag bevatten")
 
-        query = urllib.parse.urlencode(
-            {
-                "start": start.isoformat(),
-                "end": end_exclusive.isoformat(),
-                "attId": config.att_id,
+        if config.feed_url:
+            # De Feed-knop in MyX maakt een webcal-abonnement. Het bijbehorende
+            # HTTPS-adres is stabiel en bedoeld om periodiek door agenda-apps
+            # te worden opgehaald. Het bevat geen datumparameter.
+            url = config.feed_url
+            headers = {
+                "Accept": "text/calendar, text/plain;q=0.9, */*;q=0.1",
+                "User-Agent": "Aventus-Wekker/0.2",
             }
-        )
-        url = f"{config.calendar_url}?{query}"
-        request = urllib.request.Request(
-            url,
-            headers={
+        else:
+            query = urllib.parse.urlencode(
+                {
+                    "start": start.isoformat(),
+                    "end": end_exclusive.isoformat(),
+                    "attId": config.att_id,
+                }
+            )
+            url = f"{config.calendar_url}?{query}"
+            headers = {
                 "Authorization": f"Bearer {config.bearer_token}",
                 "Accept": "text/calendar, text/plain;q=0.9, */*;q=0.1",
-                "User-Agent": "Aventus-Wekker/0.1",
-            },
-            method="GET",
-        )
+                "User-Agent": "Aventus-Wekker/0.2",
+            }
+
+        request = urllib.request.Request(url, headers=headers, method="GET")
 
         try:
             with self._opener(request, timeout=self.timeout_seconds) as response:
@@ -300,8 +313,12 @@ class MyXAgendaProvider:
                 charset = response.headers.get_content_charset() or "utf-8"
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
+                if config.feed_url:
+                    raise ProviderError(
+                        "De MyX-feed is niet meer geldig; koppel de feed opnieuw via de webinstellingen."
+                    ) from exc
                 raise ProviderError(
-                    "MyX-authenticatie geweigerd; controleer de lokale Bearer-token."
+                    "MyX-authenticatie geweigerd; log opnieuw in of gebruik de MyX-feed."
                 ) from exc
             raise ProviderError(f"MyX API gaf HTTP {exc.code}") from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:

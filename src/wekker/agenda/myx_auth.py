@@ -45,6 +45,90 @@ class MyXAuthError(Exception):
     """MyX-koppeling of tokenvernieuwing is mislukt."""
 
 
+class MyXFeedError(MyXAuthError):
+    """Ongeldige of onbruikbare MyX-feedkoppeling."""
+
+
+def normalize_feed_url(value: str) -> str:
+    """Valideer een door MyX gemaakte webcal/https-feed en normaliseer naar HTTPS.
+
+    De URL zelf functioneert als een geheim abonnementstoken. Daarom accepteren
+    we uitsluitend het officiële Aventus MyX-domein en het bekende feedpad.
+    """
+    if not isinstance(value, str):
+        raise MyXFeedError("MyX-feedlink moet tekst zijn.")
+    raw = value.strip()
+    if not raw:
+        raise MyXFeedError("Plak eerst de MyX-feedlink.")
+    if raw.lower().startswith("webcal://"):
+        raw = "https://" + raw[9:]
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+    except ValueError as exc:
+        raise MyXFeedError("De MyX-feedlink is ongeldig.") from exc
+    if parsed.scheme != "https" or parsed.hostname != "aventus.myx.nl":
+        raise MyXFeedError("Gebruik alleen een feedlink van aventus.myx.nl.")
+    delen = [d for d in parsed.path.split("/") if d]
+    if len(delen) != 5 or delen[:3] != ["api", "InternetCalendar", "feed"]:
+        raise MyXFeedError("Dit lijkt niet op een MyX InternetCalendar-feed.")
+    try:
+        import uuid
+        uuid.UUID(delen[3])
+        uuid.UUID(delen[4])
+    except (ValueError, AttributeError) as exc:
+        raise MyXFeedError("De MyX-feedlink bevat ongeldige identifiers.") from exc
+    # Query/fragment horen niet bij de door MyX gegenereerde feed.
+    return urllib.parse.urlunsplit(("https", "aventus.myx.nl", parsed.path, "", ""))
+
+
+class MyXFeedStore:
+    """Bewaar alleen de permanente MyX-feedlink, met beperkte bestandsrechten."""
+
+    def __init__(self, path: str | Path | None = None) -> None:
+        self.path = Path(path) if path is not None else _default_data_dir() / "myx-feed.json"
+
+    def load(self) -> str | None:
+        if not self.path.exists():
+            return None
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            return normalize_feed_url(data["feed_url"])
+        except (OSError, KeyError, TypeError, json.JSONDecodeError, MyXFeedError) as exc:
+            raise MyXFeedError("Opgeslagen MyX-feed is onleesbaar.") from exc
+
+    def save(self, feed_url: str) -> str:
+        url = normalize_feed_url(feed_url)
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            os.chmod(self.path.parent, 0o700)
+        except OSError:
+            pass
+        tijdelijk = self.path.with_suffix(self.path.suffix + ".tmp")
+        inhoud = json.dumps({"feed_url": url}, indent=2, ensure_ascii=False)
+        fd = os.open(tijdelijk, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(inhoud)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tijdelijk, self.path)
+            os.chmod(self.path, 0o600)
+        finally:
+            try:
+                tijdelijk.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return url
+
+    def clear(self) -> bool:
+        bestond = self.path.exists()
+        try:
+            self.path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise MyXFeedError("MyX-feedbestand kon niet worden verwijderd.") from exc
+        return bestond
+
+
 def _default_data_dir() -> Path:
     basis = os.getenv("XDG_DATA_HOME")
     if basis:
@@ -442,10 +526,18 @@ class MyXAuthManager:
         self,
         *,
         store: MyXCredentialStore | None = None,
+        feed_store: MyXFeedStore | None = None,
         profile_dir: str | Path | None = None,
         chromium_bin: str | None = None,
     ) -> None:
         self.store = store or MyXCredentialStore()
+        # Bij tests/portable installaties met een custom tokenstore hoort de
+        # feed in dezelfde map te blijven in plaats van stil naar $HOME te gaan.
+        self.feed_store = feed_store or MyXFeedStore(
+            self.store.path.parent / "myx-feed.json"
+            if store is not None
+            else None
+        )
         self.profile_dir = (
             Path(profile_dir)
             if profile_dir is not None
@@ -476,12 +568,18 @@ class MyXAuthManager:
             state = self._state
             error = self._last_error
             busy = bool(self._worker and self._worker.is_alive())
-        linked = creds is not None
+        try:
+            feed_url = self.feed_store.load()
+        except MyXFeedError:
+            feed_url = None
+        linked = bool(feed_url or creds)
         token_valid = bool(creds and creds.valid_for())
         return {
             "linked": linked,
             "token_valid": token_valid,
-            "needs_login": not linked or not token_valid,
+            "feed_configured": bool(feed_url),
+            "connection_mode": "feed" if feed_url else ("browser-sso" if creds else None),
+            "needs_login": not linked or (not feed_url and not token_valid),
             "account": creds.account_label if creds else None,
             "attendee_id": creds.attendee_id if creds else None,
             "expires_at": creds.expires_at.isoformat() if creds else None,
@@ -494,6 +592,12 @@ class MyXAuthManager:
     def config(self, *, require_valid: bool = True) -> "MyXConfig":
         from wekker.agenda.myx import MyXConfig
 
+        try:
+            feed_url = self.feed_store.load()
+        except MyXFeedError:
+            feed_url = None
+        if feed_url:
+            return MyXConfig(feed_url=feed_url)
         creds = self.credentials()
         if creds and (creds.valid_for() or not require_valid):
             return MyXConfig(bearer_token=creds.access_token, att_id=creds.attendee_id)
@@ -507,6 +611,13 @@ class MyXAuthManager:
     def ensure_config(self) -> "MyXConfig":
         """Geef geldige config; probeer vlak voor afloop stil te vernieuwen."""
         from wekker.agenda.myx import MyXConfig
+
+        try:
+            feed_url = self.feed_store.load()
+        except MyXFeedError as exc:
+            raise MyXAuthError(str(exc)) from exc
+        if feed_url:
+            return MyXConfig(feed_url=feed_url)
 
         creds = self.credentials()
         if creds and creds.valid_for(REFRESH_MARGIN_SECONDS):
@@ -652,6 +763,7 @@ class MyXAuthManager:
             if self._worker and self._worker.is_alive():
                 raise MyXAuthError("Wacht tot de lopende MyX-login klaar is.")
             had = self.store.clear()
+            had_feed = self.feed_store.clear()
             if clear_browser_session and self.profile_dir.exists():
                 try:
                     shutil.rmtree(self.profile_dir)
@@ -659,4 +771,18 @@ class MyXAuthManager:
                     raise MyXAuthError("MyX-browsersessie kon niet worden verwijderd.") from exc
             self._state = "idle"
             self._last_error = ""
-            return had
+            return had or had_feed
+
+    def save_feed(self, feed_url: str) -> str:
+        """Koppel MyX via de permanente InternetCalendar-feed."""
+        url = self.feed_store.save(feed_url)
+        with self._lock:
+            self._state = "linked"
+            self._last_error = ""
+        return url
+
+    def feed_url(self) -> str | None:
+        try:
+            return self.feed_store.load()
+        except MyXFeedError:
+            return None

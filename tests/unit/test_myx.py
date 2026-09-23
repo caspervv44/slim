@@ -166,14 +166,14 @@ def test_provider_stuurt_bearer_en_correct_datumbereik():
         return _Response(ICS_TWO.encode())
 
     provider = MyXAgendaProvider(
-        MyXConfig(bearer_token="token123", att_id="195711"),
+        MyXConfig(bearer_token="token123", att_id="123456"),
         opener=opener,
     )
     lessen = provider.fetch_day(date(2026, 9, 17))
     assert len(lessen) == 2
     assert "start=2026-09-17" in gezien["url"]
     assert "end=2026-09-18" in gezien["url"]
-    assert "attId=195711" in gezien["url"]
+    assert "attId=123456" in gezien["url"]
     assert gezien["auth"] == "Bearer token123"
 
 
@@ -185,7 +185,7 @@ def test_authenticatiefout_is_duidelijk_en_lekt_token_niet(status):
         raise urllib.error.HTTPError(request.full_url, status, "no", {}, None)
 
     provider = MyXAgendaProvider(
-        MyXConfig(bearer_token=geheim, att_id="195711"),
+        MyXConfig(bearer_token=geheim, att_id="123456"),
         opener=opener,
     )
     with pytest.raises(ProviderError) as exc:
@@ -199,7 +199,7 @@ def test_api_netwerkfout_wordt_provider_error():
         raise urllib.error.URLError("offline")
 
     provider = MyXAgendaProvider(
-        MyXConfig(bearer_token="token", att_id="195711"),
+        MyXConfig(bearer_token="token", att_id="123456"),
         opener=opener,
     )
     with pytest.raises(ProviderError) as exc:
@@ -248,3 +248,24 @@ def test_range_sync_schrijft_ook_lege_dagen():
     assert sync.sync_default_window() is True
     assert len(cache.get_day(date(2026, 9, 17))) == 2
     assert cache.get_day(date(2026, 9, 18)) == []
+
+
+def test_provider_gebruikt_stabiele_feed_zonder_bearer():
+    gezien = {}
+    feed = (
+        "https://aventus.myx.nl/api/InternetCalendar/feed/"
+        "11111111-1111-4111-8111-111111111111/"
+        "22222222-2222-4222-8222-222222222222"
+    )
+
+    def opener(request, timeout):
+        gezien["url"] = request.full_url
+        gezien["auth"] = request.get_header("Authorization")
+        return _Response(ICS_TWO.encode())
+
+    provider = MyXAgendaProvider(MyXConfig(feed_url=feed), opener=opener)
+    lessen = provider.fetch_range(date(2026, 9, 17), date(2026, 9, 18))
+
+    assert len(lessen) == 2
+    assert gezien["url"] == feed
+    assert gezien["auth"] is None

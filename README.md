@@ -59,9 +59,9 @@ prototype start en werkt volledig zonder.
   data uit de bestaande core/settings/agenda — geen eigen logica.
 - **Agenda-providers** (`src/wekker/agenda/`): register met mock,
   OSIRIS–ROC Aventus (demo-login ter voorbereiding op Entree) en
-  placeholders voor Somtoday/Magister. MyX gebruikt een studentvriendelijke
-  browser-SSO op de Pi met een blijvend Chromium-profiel en automatische
-  tokenvernieuwing waar de bestaande SSO-sessie dat toelaat; zie
+  placeholders voor Somtoday/Magister. MyX gebruikt bij voorkeur de
+  permanente InternetCalendar Feed die via de webinterface wordt gekoppeld.
+  Browser-SSO op de Pi blijft als fallback beschikbaar; zie
   `docs/myx-xedule.md`. Het schoolwachtwoord wordt niet door de wekker opgeslagen.
 - **Tests**: unit + integratie (zie onder). Architectuur: `docs/architecture.md`.
 
@@ -140,20 +140,21 @@ het agendescherm (OSIRIS-lessen of demo-data met badge). Op de Pi draait de GUI
 als echte kiosk (geen titlebar, geen desktop-panel); Escape sluit af.
 Details: `docs/touch-gui.md`.
 
-### MyX koppelen op het Pi-scherm
+### MyX koppelen via de webinterface
 
-Installeer op Raspberry Pi OS eerst Chromium en tkinter:
+Start de webinterface op het lokale netwerk:
 
 ```bash
-sudo apt update
-sudo apt install -y chromium python3-tk
+python -m wekker gui --host 0.0.0.0 --port 8080
 ```
 
-Start daarna `python -m wekker gui`, tik rechtsboven op het tandwiel en kies
-**MyX koppelen**. Chromium opent de officiële Aventus/MyX-login op het
-ingebouwde scherm. Na succesvolle login komt de wekker automatisch terug.
-De student hoeft geen Bearer-token te zoeken. Zie `docs/myx-xedule.md` voor
-opslag, automatische vernieuwing en probleemoplossing.
+Open daarna `http://<ip-van-de-pi>:8080/`. De MyX-sectie begeleidt de student
+naar **Mijn rooster → ⋮ → Feed** en accepteert de permanente `webcal://`-link.
+Het ingebouwde touchscreen bevat geen instellingenmenu meer: daar blijven alleen
+de klok en agenda zichtbaar. Browser-SSO op het Pi-scherm is nog beschikbaar
+als fallback vanuit de webinterface.
+
+Details: `docs/myx-xedule.md`.
 
 ## Tests draaien
 

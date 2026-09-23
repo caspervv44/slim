@@ -14,10 +14,12 @@ from wekker.agenda.myx_auth import (
     MyXAuthManager,
     MyXCredentialStore,
     MyXCredentials,
+    MyXFeedStore,
+    normalize_feed_url,
 )
 
 
-def _jwt(*, atn_id: int = 195711, seconds: int = 3600, name: str = "Teststudent") -> str:
+def _jwt(*, atn_id: int = 123456, seconds: int = 3600, name: str = "Teststudent") -> str:
     now = datetime.now(timezone.utc)
 
     def enc(obj):
@@ -57,7 +59,7 @@ def test_store_roundtrip_en_bestandsrechten(tmp_path):
 
     geladen = store.load()
     assert geladen is not None
-    assert geladen.attendee_id == "195711"
+    assert geladen.attendee_id == "123456"
     if os.name == "posix":
         assert path.stat().st_mode & 0o777 == 0o600
 
@@ -121,3 +123,43 @@ def test_start_interactive_is_eenmalig_tijdens_lopende_worker(tmp_path, monkeypa
         __import__("time").sleep(0.01)
     assert manager.start_interactive() is False
     blocker.set()
+
+
+def test_feed_url_webcal_wordt_naar_https_genormaliseerd():
+    raw = (
+        "webcal://aventus.myx.nl/api/InternetCalendar/feed/"
+        "11111111-1111-4111-8111-111111111111/"
+        "22222222-2222-4222-8222-222222222222"
+    )
+    assert normalize_feed_url(raw).startswith("https://aventus.myx.nl/")
+
+
+@pytest.mark.parametrize("url", [
+    "https://evil.example/api/InternetCalendar/feed/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222",
+    "https://aventus.myx.nl/iets-anders",
+    "blob:https://aventus.myx.nl/bd0f404d-e924-41df-b8cc-ba41a088cc6d",
+])
+def test_feed_url_weigert_onveilige_of_blob_links(url):
+    with pytest.raises(MyXAuthError):
+        normalize_feed_url(url)
+
+
+def test_manager_feed_heeft_voorrang_op_tijdelijke_token(tmp_path):
+    store = MyXCredentialStore(tmp_path / "myx-auth.json")
+    store.save(MyXCredentials.from_token(_jwt(atn_id=777)))
+    feed_store = MyXFeedStore(tmp_path / "myx-feed.json")
+    feed = (
+        "https://aventus.myx.nl/api/InternetCalendar/feed/"
+        "11111111-1111-4111-8111-111111111111/"
+        "22222222-2222-4222-8222-222222222222"
+    )
+    feed_store.save(feed)
+    manager = MyXAuthManager(
+        store=store, feed_store=feed_store, profile_dir=tmp_path / "profile"
+    )
+
+    cfg = manager.ensure_config()
+
+    assert cfg.feed_url == feed
+    assert manager.status()["connection_mode"] == "feed"
+    assert manager.status()["linked"] is True
