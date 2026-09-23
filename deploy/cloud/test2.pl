@@ -1,4 +1,4 @@
-#!/usr/bin/env perl
+#! C:/Perl64/bin/perl.exe
 use strict;
 use warnings;
 use utf8;
@@ -8,14 +8,17 @@ use Digest::SHA qw(hmac_sha256 sha256_hex);
 use Fcntl qw(:DEFAULT :flock);
 use File::Basename qw(dirname);
 use File::Path qw(make_path);
+use File::Spec;
+use MIME::Base64 qw(decode_base64);
 use POSIX qw(strftime);
 
 binmode STDOUT, ':encoding(UTF-8)';
 binmode STDERR, ':encoding(UTF-8)';
 
 # WaveSync cloudbeheer.
-# Bewaart alleen niet-geheime wekkerinstellingen. MyX-feedlinks/tokens horen
-# expliciet NIET in deze opslag.
+# Bewaart WaveSync-instellingen per apparaat. Een MyX-feedlink wordt alleen
+# tijdelijk bewaard totdat de gekoppelde Pi hem via HTTPS heeft opgehaald en
+# bevestigd; daarna wordt de URL uit het serverrecord verwijderd.
 
 my $MAX_BODY = 64 * 1024;
 my $SESSION_TTL = 30 * 24 * 60 * 60;
@@ -42,8 +45,9 @@ my %query = _parse_params($ENV{QUERY_STRING} || '');
 if ($method eq 'GET' && ($query{health} || '') eq '1') {
     _json_ok({
         service => 'wavesync',
-        version => 2,
+        version => 5,
         storage_writable => JSON::PP::true,
+        storage_backend => 'file-per-device',
     });
 }
 
@@ -119,7 +123,7 @@ sub _handle_api {
 
         my $salt = _random_hex(16);
         my $record = {
-            schema_version => 2,
+            schema_version => 5,
             device_id => $device_id,
             device_key_hash => sha256_hex($device_key),
             username => $username,
@@ -129,6 +133,8 @@ sub _handle_api {
             password_changed => JSON::PP::false,
             revision => 1,
             settings => $settings,
+            myx_feed_configured => JSON::PP::false,
+            pending_myx_feed => undef,
             created_at => _iso_now(),
             updated_at => _iso_now(),
             sessions => {},
@@ -154,13 +160,52 @@ sub _handle_api {
             $reply = _with_record($device, sub {
                 my ($record) = @_;
                 _require_device_key($record, $key);
+                my $feed_update;
+                if (ref($record->{pending_myx_feed}) eq 'HASH') {
+                    my $pending = $record->{pending_myx_feed};
+                    $feed_update = {
+                        id => $pending->{id} || '',
+                        action => $pending->{action} || '',
+                    };
+                    if (($pending->{action} || '') eq 'set') {
+                        $feed_update->{url} = $pending->{url} || '';
+                    }
+                }
                 return {
                     settings => $record->{settings},
                     revision => int($record->{revision} || 0),
                     password_changed => $record->{password_changed}
                         ? JSON::PP::true : JSON::PP::false,
+                    myx_feed_configured => $record->{myx_feed_configured}
+                        ? JSON::PP::true : JSON::PP::false,
+                    (defined($feed_update)
+                        ? (myx_feed_update => $feed_update)
+                        : ()),
                     updated_at => $record->{updated_at},
                 };
+            });
+            1;
+        } or _api_exception($@);
+        _json_ok($reply);
+    }
+
+    if ($action eq 'ack_feed') {
+        my $update_id = $req->{update_id} || '';
+        $update_id =~ /\A[0-9a-f]{32}\z/
+            or _json_error(400, 'ongeldige feed update-id');
+
+        my $reply;
+        eval {
+            $reply = _update_record($device, sub {
+                my ($record) = @_;
+                _require_device_key($record, $key);
+                my $pending = $record->{pending_myx_feed};
+                if (ref($pending) eq 'HASH'
+                    && ($pending->{id} || '') eq $update_id) {
+                    $record->{pending_myx_feed} = undef;
+                    $record->{updated_at} = _iso_now();
+                }
+                return { revision => int($record->{revision} || 0) };
             });
             1;
         } or _api_exception($@);
@@ -280,38 +325,130 @@ sub _web_save {
     _valid_device_id($device_id)
         or _html(400, _page('Fout', '<div class="card">Ongeldige wekker-ID.</div>'));
 
-    my $result = _update_record($device_id, sub {
-        my ($record) = @_;
-        my ($sid, $session) = _current_session($record);
-        _require_csrf_or_signal($session, $form->{csrf});
+    my $result;
+    eval {
+        $result = _update_record($device_id, sub {
+            my ($record) = @_;
+            my ($sid, $session) = _current_session($record);
+            _require_csrf_or_signal($session, $form->{csrf});
 
-        my $settings = $record->{settings};
-        $settings->{alarm}{time} = _valid_time($form->{alarm_time})
-            ? $form->{alarm_time} : $settings->{alarm}{time};
-        $settings->{alarm}{enabled} = $form->{alarm_enabled}
-            ? JSON::PP::true : JSON::PP::false;
-        $settings->{alarm}{snooze_minutes} =
-            _clamp_int($form->{snooze_minutes}, 1, 60, 9);
-        $settings->{lamp}{duration_after_button} =
-            _clamp_int($form->{lamp_duration}, 1, 3600, 30);
-        $settings->{display}{brightness} =
-            _clamp_int($form->{brightness}, 0, 100, 80);
+            my $settings = $record->{settings};
 
-        my %zones = map { $_ => 1 } qw(
-            Europe/Amsterdam Europe/Paris Europe/London Europe/Berlin
-            Europe/Brussels Europe/Madrid Europe/Rome UTC
-        );
-        $settings->{locale}{timezone} =
-            $zones{$form->{timezone} || ''} ? $form->{timezone} : 'Europe/Amsterdam';
-        $settings->{locale}{time_format} =
-            ($form->{time_format} || '') eq '12h' ? '12h' : '24h';
+            $settings->{alarm}{time} = _valid_time($form->{alarm_time})
+                ? $form->{alarm_time} : $settings->{alarm}{time};
+            $settings->{alarm}{enabled} = $form->{alarm_enabled}
+                ? JSON::PP::true : JSON::PP::false;
+            $settings->{alarm}{snooze_minutes} =
+                _clamp_int($form->{snooze_minutes}, 1, 60, 9);
+            $settings->{alarm}{sound} = _clean_text(
+                $form->{sound}, 1, 64, 'beep'
+            );
+            $settings->{alarm}{volume} =
+                _clamp_int($form->{volume}, 0, 100, 70);
+            $settings->{alarm}{speaker_enabled} = $form->{speaker_enabled}
+                ? JSON::PP::true : JSON::PP::false;
+            $settings->{alarm}{lamp_brightness} =
+                _clamp_int($form->{alarm_lamp_brightness}, 0, 100, 100);
+            $settings->{alarm}{lamp_blink} = $form->{lamp_blink}
+                ? JSON::PP::true : JSON::PP::false;
 
-        _validate_settings($settings);
-        $record->{settings} = $settings;
-        $record->{revision} = int($record->{revision} || 0) + 1;
-        $record->{updated_at} = _iso_now();
-        return 1;
-    });
+            my %blink = map { $_ => 1 } qw(steady blink pulse);
+            $settings->{alarm}{blink_pattern} =
+                $blink{$form->{blink_pattern} || ''}
+                    ? $form->{blink_pattern} : 'blink';
+            $settings->{alarm}{ramp_up_seconds} =
+                _clamp_int($form->{ramp_up_seconds}, 0, 3600, 30);
+
+            $settings->{lamp}{duration_after_button} =
+                _clamp_int($form->{lamp_duration}, 1, 3600, 30);
+            $settings->{lamp}{on_with_alarm} = $form->{lamp_on_with_alarm}
+                ? JSON::PP::true : JSON::PP::false;
+
+            $settings->{display}{brightness} =
+                _clamp_int($form->{brightness}, 0, 100, 80);
+            $settings->{display}{on_duration_seconds} =
+                _clamp_int($form->{display_on_duration}, 1, 600, 30);
+
+            my %night = map { $_ => 1 } qw(off dim);
+            $settings->{display}{night_mode} =
+                $night{$form->{night_mode} || ''}
+                    ? $form->{night_mode} : 'dim';
+            $settings->{display}{night_start} =
+                _valid_time($form->{night_start}) ? $form->{night_start} : '23:00';
+            $settings->{display}{night_end} =
+                _valid_time($form->{night_end}) ? $form->{night_end} : '07:00';
+
+            my @visible;
+            for my $field (qw(time next_alarm first_lesson teacher room last_lesson day_agenda)) {
+                push @visible, $field if $form->{"visible_$field"};
+            }
+            @visible = qw(time next_alarm first_lesson teacher room) if !@visible;
+            $settings->{display}{visible_fields} = \@visible;
+
+            my %zones = map { $_ => 1 } qw(
+                Europe/Amsterdam Europe/Paris Europe/London Europe/Berlin
+                Europe/Brussels Europe/Madrid Europe/Rome UTC
+            );
+            $settings->{locale}{timezone} =
+                $zones{$form->{timezone} || ''}
+                    ? $form->{timezone} : 'Europe/Amsterdam';
+            $settings->{locale}{time_format} =
+                ($form->{time_format} || '') eq '12h' ? '12h' : '24h';
+            my $region = uc($form->{region} || 'NL');
+            $settings->{locale}{region} =
+                $region =~ /\A[A-Z]{2}\z/ ? $region : 'NL';
+
+            $settings->{agenda} ||= {};
+            my %providers = map { $_ => 1 } qw(mock magister somtoday osiris myx);
+            $settings->{agenda}{provider} =
+                $providers{$form->{agenda_provider} || ''}
+                    ? $form->{agenda_provider}
+                    : ($settings->{agenda}{provider} || 'myx');
+            $settings->{agenda}{auto_sync_minutes} =
+                _clamp_int($form->{auto_sync_minutes}, 0, 1440, 15);
+
+            my $feed = $form->{myx_feed} // '';
+            $feed =~ s/^\s+|\s+$//g;
+            if ($form->{clear_myx_feed}) {
+                $record->{pending_myx_feed} = {
+                    id => _random_hex(16),
+                    action => 'clear',
+                };
+                $record->{myx_feed_configured} = JSON::PP::false;
+            }
+            elsif ($feed ne '') {
+                my $normalized = _normalize_myx_feed($feed);
+                $record->{pending_myx_feed} = {
+                    id => _random_hex(16),
+                    action => 'set',
+                    url => $normalized,
+                };
+                $record->{myx_feed_configured} = JSON::PP::true;
+                $settings->{agenda}{provider} = 'myx';
+            }
+
+            _validate_settings($settings);
+            $record->{settings} = $settings;
+            $record->{revision} = int($record->{revision} || 0) + 1;
+            $record->{updated_at} = _iso_now();
+            return 1;
+        });
+        1;
+    } or do {
+        my $e = $@;
+        if (ref($e) eq 'WaveSync::Error') {
+            my $r = _with_record($device_id, sub {
+                my ($record) = @_;
+                my (undef, $session) = _current_session($record);
+                return { record => $record, session => $session };
+            });
+            _html($e->{code}, _settings_page(
+                $device_id, $r->{record}, $r->{session}, $e->{message}
+            ));
+        }
+        die $e;
+    };
+
     _redirect("$PUBLIC_URL?d=$device_id&saved=1");
 }
 
@@ -406,9 +543,8 @@ sub _settings_page {
     my ($device_id, $r, $session, $error) = @_;
     my $s = $r->{settings};
     my $csrf = _h($session->{csrf} || '');
-    my $checked = $s->{alarm}{enabled} ? ' checked' : '';
     my $saved = ($ENV{QUERY_STRING} || '') =~ /(?:^|&)saved=1(?:&|$)/
-        ? '<div class="notice ok">Instellingen opgeslagen. WaveSync haalt ze automatisch op.</div>' : '';
+        ? '<div class="notice ok">Opgeslagen. Je WaveSync neemt de wijziging meestal binnen 30 seconden over.</div>' : '';
     my $pw = ($ENV{QUERY_STRING} || '') =~ /(?:^|&)password=1(?:&|$)/
         ? '<div class="notice ok">Wachtwoord gewijzigd.</div>' : '';
     my $err = $error
@@ -437,6 +573,46 @@ sub _settings_page {
     my $fmt12 =
         ($s->{locale}{time_format} || '') eq '12h' ? ' selected' : '';
 
+    my $alarm_checked = $s->{alarm}{enabled} ? ' checked' : '';
+    my $speaker_checked = $s->{alarm}{speaker_enabled} ? ' checked' : '';
+    my $blink_checked = $s->{alarm}{lamp_blink} ? ' checked' : '';
+    my $lamp_alarm_checked = $s->{lamp}{on_with_alarm} ? ' checked' : '';
+
+    my %visible = map { $_ => 1 } @{$s->{display}{visible_fields} || []};
+    my $vc = sub {
+        my ($name) = @_;
+        return $visible{$name} ? ' checked' : '';
+    };
+
+    my $night_off = ($s->{display}{night_mode} || '') eq 'off' ? ' selected' : '';
+    my $night_dim = ($s->{display}{night_mode} || 'dim') eq 'dim' ? ' selected' : '';
+
+    my $blink_pattern = $s->{alarm}{blink_pattern} || 'blink';
+    my $blink_options = join '', map {
+        my $sel = $blink_pattern eq $_ ? ' selected' : '';
+        '<option value="' . $_ . '"' . $sel . '>' .
+            ($_ eq 'steady' ? 'Constant' : $_ eq 'pulse' ? 'Pulseren' : 'Knipperen')
+            . '</option>'
+    } qw(steady blink pulse);
+
+    my $provider = $s->{agenda}{provider} || 'myx';
+    my @providers = (
+        ['myx', 'MyX / Xedule'],
+        ['mock', 'Voorbeelddata'],
+        ['osiris', 'OSIRIS'],
+        ['magister', 'Magister'],
+        ['somtoday', 'Somtoday'],
+    );
+    my $provider_options = join '', map {
+        my ($value, $label) = @$_;
+        my $sel = $provider eq $value ? ' selected' : '';
+        '<option value="' . _h($value) . '"' . $sel . '>' . _h($label) . '</option>'
+    } @providers;
+
+    my $feed_status = $r->{myx_feed_configured}
+        ? '<span class="pill ok">MyX-feed gekoppeld</span>'
+        : '<span class="pill">Nog geen MyX-feed</span>';
+
     return _page('Instellingen', qq{
 <div class="shell">
 <header>
@@ -448,24 +624,72 @@ sub _settings_page {
   </form>
 </header>
 $saved$pw$err
-<div class="grid">
-<section class="card">
-<h2>Wekker</h2>
-<form method="post">
+
+<form method="post" class="settings-form">
 <input type="hidden" name="action" value="save">
 <input type="hidden" name="d" value="@{[_h($device_id)]}">
 <input type="hidden" name="csrf" value="$csrf">
+
+<div class="grid">
+<section class="card">
+<h2>Alarm</h2>
 <label>Wektijd<input type="time" name="alarm_time" value="@{[_h($s->{alarm}{time} || '07:30')]}" required></label>
-<label class="check"><input type="checkbox" name="alarm_enabled" value="1"$checked> Alarm ingeschakeld</label>
+<label class="check"><input type="checkbox" name="alarm_enabled" value="1"$alarm_checked> Alarm ingeschakeld</label>
 <label>Snooze (minuten)<input type="number" min="1" max="60" name="snooze_minutes" value="@{[int($s->{alarm}{snooze_minutes} || 9)]}"></label>
-<label>Lampduur na knop (seconden)<input type="number" min="1" max="3600" name="lamp_duration" value="@{[int($s->{lamp}{duration_after_button} || 30)]}"></label>
-<label>Schermhelderheid<input type="range" min="0" max="100" name="brightness" value="@{[int($s->{display}{brightness} || 80)]}"></label>
-<label>Tijdzone<select name="timezone">$zone_options</select></label>
-<label>Tijdweergave<select name="time_format"><option value="24h"$fmt24>24 uur · 20:41</option><option value="12h"$fmt12>12 uur · 8:41 PM</option></select></label>
-<button class="primary" type="submit">Instellingen opslaan</button>
-</form>
+<label>Geluid<input name="sound" maxlength="64" value="@{[_h($s->{alarm}{sound} || 'beep')]}"></label>
+<label>Volume <span class="value-note">@{[int($s->{alarm}{volume} // 70)]}%</span>
+<input type="range" min="0" max="100" name="volume" value="@{[int($s->{alarm}{volume} // 70)]}"></label>
+<label class="check"><input type="checkbox" name="speaker_enabled" value="1"$speaker_checked> Speaker bij alarm</label>
+<label>Lampsterkte bij alarm <span class="value-note">@{[int($s->{alarm}{lamp_brightness} // 100)]}%</span>
+<input type="range" min="0" max="100" name="alarm_lamp_brightness" value="@{[int($s->{alarm}{lamp_brightness} // 100)]}"></label>
+<label class="check"><input type="checkbox" name="lamp_blink" value="1"$blink_checked> Lamp-effect gebruiken</label>
+<label>Lamp-effect<select name="blink_pattern">$blink_options</select></label>
+<label>Rustig opbouwen (seconden)<input type="number" min="0" max="3600" name="ramp_up_seconds" value="@{[int($s->{alarm}{ramp_up_seconds} // 30)]}"></label>
 </section>
 
+<section class="card">
+<h2>Scherm &amp; tijd</h2>
+<label>Schermhelderheid <span class="value-note">@{[int($s->{display}{brightness} // 80)]}%</span>
+<input type="range" min="0" max="100" name="brightness" value="@{[int($s->{display}{brightness} // 80)]}"></label>
+<label>Scherm actief na bediening (seconden)<input type="number" min="1" max="600" name="display_on_duration" value="@{[int($s->{display}{on_duration_seconds} // 30)]}"></label>
+<label>Nachtmodus<select name="night_mode"><option value="dim"$night_dim>Dimmen</option><option value="off"$night_off>Scherm uit</option></select></label>
+<div class="split"><label>Nacht start<input type="time" name="night_start" value="@{[_h($s->{display}{night_start} || '23:00')]}"></label>
+<label>Nacht einde<input type="time" name="night_end" value="@{[_h($s->{display}{night_end} || '07:00')]}"></label></div>
+<label>Tijdzone<select name="timezone">$zone_options</select></label>
+<label>Tijdweergave<select name="time_format"><option value="24h"$fmt24>24 uur · 20:41</option><option value="12h"$fmt12>12 uur · 8:41 PM</option></select></label>
+<label>Regio<input name="region" maxlength="2" value="@{[_h($s->{locale}{region} || 'NL')]}"></label>
+</section>
+
+<section class="card">
+<h2>Lamp &amp; scherminformatie</h2>
+<label>Lampduur na fysieke knop (seconden)<input type="number" min="1" max="3600" name="lamp_duration" value="@{[int($s->{lamp}{duration_after_button} || 30)]}"></label>
+<label class="check"><input type="checkbox" name="lamp_on_with_alarm" value="1"$lamp_alarm_checked> Lamp aan bij alarm</label>
+<div class="field-title">Informatie op de klok</div>
+<label class="check"><input type="checkbox" name="visible_time" value="1"@{[$vc->('time')]}> Tijd</label>
+<label class="check"><input type="checkbox" name="visible_next_alarm" value="1"@{[$vc->('next_alarm')]}> Volgend alarm</label>
+<label class="check"><input type="checkbox" name="visible_first_lesson" value="1"@{[$vc->('first_lesson')]}> Eerste les</label>
+<label class="check"><input type="checkbox" name="visible_teacher" value="1"@{[$vc->('teacher')]}> Docent</label>
+<label class="check"><input type="checkbox" name="visible_room" value="1"@{[$vc->('room')]}> Lokaal</label>
+<label class="check"><input type="checkbox" name="visible_last_lesson" value="1"@{[$vc->('last_lesson')]}> Laatste les</label>
+<label class="check"><input type="checkbox" name="visible_day_agenda" value="1"@{[$vc->('day_agenda')]}> Dagsamenvatting</label>
+</section>
+
+<section class="card">
+<h2>Rooster / MyX</h2>
+<div class="status-row">$feed_status</div>
+<label>Agenda-provider<select name="agenda_provider">$provider_options</select></label>
+<label>Automatisch synchroniseren (minuten)<input type="number" min="0" max="1440" name="auto_sync_minutes" value="@{[int($s->{agenda}{auto_sync_minutes} // 15)]}"></label>
+<label>MyX iCalendar / Feed-link
+<input name="myx_feed" autocomplete="off" spellcheck="false" placeholder="webcal://aventus.myx.nl/api/InternetCalendar/feed/…"></label>
+<p class="muted">Plak hier de Feed-link uit MyX. De URL wordt na ophalen door je Raspberry Pi weer uit de serveropslag verwijderd.</p>
+<label class="check danger-check"><input type="checkbox" name="clear_myx_feed" value="1"> MyX-feed van deze WaveSync verwijderen</label>
+</section>
+</div>
+
+<div class="savebar"><button class="primary save" type="submit">Alle instellingen opslaan</button></div>
+</form>
+
+<div class="grid lower-grid">
 <section class="card">
 <h2>Beveiliging</h2>
 <p class="muted">Iedere WaveSync gebruikt een willekeurige 256-bit beheer-ID en een aparte 256-bit device key.</p>
@@ -477,10 +701,17 @@ $saved$pw$err
 <label>Herhaal wachtwoord<input type="password" name="confirm_password" minlength="12" maxlength="128" autocomplete="new-password" required></label>
 <button type="submit">Wachtwoord wijzigen</button>
 </form>
-<div class="security-note">MyX-feedlinks, Bearer-tokens en andere accountgeheimen worden niet op deze server opgeslagen.</div>
+<div class="security-note">De MyX-feedlink wordt alleen tijdelijk op de server bewaard totdat de gekoppelde Pi hem heeft opgehaald.</div>
+</section>
+
+<section class="card">
+<h2>Status</h2>
+<p class="muted">Laatste wijziging: <b>@{[_h($r->{updated_at} || 'onbekend')]}</b></p>
+<p class="muted">Revisie: <b>@{[int($r->{revision} || 0)]}</b></p>
+<p class="muted">Wijzigingen worden normaal binnen ongeveer 30 seconden door de klok opgehaald.</p>
 </section>
 </div>
-<footer>Laatste wijziging: @{[_h($r->{updated_at} || 'onbekend')]} · revisie @{[int($r->{revision} || 0)]}</footer>
+<footer>WaveSync · apparaat @{[_h(substr($device_id, 0, 10))]}…</footer>
 </div>});
 }
 
@@ -501,14 +732,19 @@ header{display:flex;justify-content:space-between;align-items:center;margin-bott
 .card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:20px;box-shadow:0 7px 24px rgba(24,39,75,.06)}
 h1,h2{margin-top:0}h1{font-size:1.45rem}h2{font-size:1.1rem}
 form{display:grid;gap:12px}label{display:grid;gap:6px;font-size:.88rem;font-weight:650}
-.check{display:flex;align-items:center;gap:8px}
+.check{display:flex;align-items:center;gap:8px}.check input{width:auto}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.field-title{font-size:.86rem;font-weight:800;margin-top:4px}.value-note{float:right;color:var(--muted);font-weight:500}
+.status-row{margin-bottom:8px}.pill{display:inline-flex;padding:5px 9px;border-radius:999px;background:#eef2f7;color:var(--muted);font-size:.78rem;font-weight:800}
+.pill.ok{background:#eaf8f2;color:var(--ok)}.savebar{position:sticky;bottom:0;padding:14px 0;background:linear-gradient(transparent,var(--bg) 28%)}
+.save{width:100%;padding:13px}.lower-grid{margin-top:16px}.danger-check{color:var(--bad)}
 input,select,button{font:inherit;border:1px solid #cfd6e2;border-radius:11px;padding:10px 12px;background:white}
 button{cursor:pointer;font-weight:700}.primary{background:var(--b);color:white;border-color:var(--b)}
 .muted{color:var(--muted);font-size:.9rem}.notice{padding:11px 13px;border-radius:10px;margin-bottom:14px}
 .ok{background:#eaf8f2;color:var(--ok)}.bad{background:#fff0ef;color:var(--bad)}
 .security-note{margin-top:18px;padding:12px;background:#f7f9fc;border-radius:10px;color:var(--muted);font-size:.84rem;line-height:1.45}
 footer{color:var(--muted);font-size:.78rem;margin-top:16px}
-\@media(max-width:700px){.grid{grid-template-columns:1fr}.shell{padding:14px}}
+\@media(max-width:700px){.grid,.split{grid-template-columns:1fr}.shell{padding:14px}.savebar{bottom:0}}
 </style></head><body>$content</body></html>};
 }
 
@@ -516,30 +752,68 @@ footer{color:var(--muted);font-size:.78rem;margin-top:16px}
 # Opslag
 
 sub _choose_data_dir {
+    # De oude, werkende test.pl gebruikt:
+    #   C:/wamp64/www/veendomain/klok/data
+    #
+    # We bewaren WaveSync-records in een eigen submap zodat de oude
+    # variabelensets niet worden vermengd met de nieuwe JSON-records.
+    #
+    # WEKKER_DATA_DIR heeft altijd voorrang als je later buiten de
+    # DocumentRoot wilt opslaan.
     my @candidates;
-    push @candidates, $ENV{WEKKER_DATA_DIR} if $ENV{WEKKER_DATA_DIR};
+
+    push @candidates, $ENV{WEKKER_DATA_DIR}
+        if defined $ENV{WEKKER_DATA_DIR} && $ENV{WEKKER_DATA_DIR} ne '';
+
+    push @candidates, 'C:/wamp64/www/veendomain/klok/data/wavesync';
+    push @candidates, dirname(__FILE__) . '/data/wavesync';
     push @candidates, dirname(__FILE__) . '/.wavesync-data';
-    push @candidates, "$ENV{HOME}/.wavesync-data" if $ENV{HOME};
+
+    push @candidates, "$ENV{HOME}/.wavesync-data"
+        if defined $ENV{HOME} && $ENV{HOME} ne '';
+
+    my @errors;
 
     for my $dir (@candidates) {
-        next if !$dir;
-        eval {
+        next if !defined $dir || $dir eq '';
+
+        my $ok = eval {
             if (!-d $dir) {
-                make_path($dir, { mode => 0700 });
+                make_path($dir);
             }
-            chmod 0700, $dir;
-            my $probe = "$dir/.write-test-$$";
-            open my $fh, '>', $probe or die "niet schrijfbaar";
-            print {$fh} "ok";
-            close $fh;
+
+            die "directory bestaat niet na aanmaken"
+                if !-d $dir;
+
+            my $probe = File::Spec->catfile(
+                $dir,
+                ".wavesync-write-test-$$-" . _random_hex(4)
+            );
+
+            open my $fh, '>:raw', $probe
+                or die "niet schrijfbaar: $!";
+
+            print {$fh} "ok\n";
+
+            close $fh
+                or die "testbestand kon niet worden gesloten: $!";
+
             unlink $probe;
+
             _write_htaccess($dir);
-            return 1;
-        } and return $dir;
+
+            1;
+        };
+
+        return $dir if $ok;
+
+        my $error = $@ || 'onbekende fout';
+        $error =~ s/\s+\z//;
+        push @errors, "$dir: $error";
     }
 
-    # Dit wordt door CGI als duidelijke serverfout gelogd.
-    die "WaveSync data-directory is niet schrijfbaar. Stel WEKKER_DATA_DIR in.";
+    die "WaveSync data-directory is niet schrijfbaar. "
+      . "Geprobeerd: " . join(' | ', @errors);
 }
 
 sub _write_htaccess {
@@ -547,7 +821,7 @@ sub _write_htaccess {
     my $ht = "$dir/.htaccess";
     return if -e $ht;
     if (open my $fh, '>', $ht) {
-        print {$fh} "Require all denied\nDeny from all\n";
+        print {$fh} "Require all denied\n<IfModule mod_access_compat.c>\nDeny from all\n</IfModule>\n";
         close $fh;
         chmod 0600, $ht;
     }
@@ -698,14 +972,64 @@ sub _secure_eq {
 
 sub _random_bytes {
     my ($count) = @_;
-    open my $fh, '<:raw', '/dev/urandom'
-        or die "kan /dev/urandom niet openen";
-    my $buf = '';
-    my $got = read($fh, $buf, $count);
-    close $fh;
-    die "te weinig random bytes"
-        if !defined($got) || $got != $count;
-    return $buf;
+
+    die "ongeldig aantal random bytes"
+        if !defined($count) || $count !~ /^\d+$/ || $count < 1 || $count > 4096;
+
+    # Linux / Raspberry Pi / Unix.
+    if (-r '/dev/urandom') {
+        open my $fh, '<:raw', '/dev/urandom'
+            or die "kan /dev/urandom niet openen: $!";
+
+        my $buf = '';
+        my $offset = 0;
+
+        while ($offset < $count) {
+            my $got = read($fh, my $chunk, $count - $offset);
+            die "fout bij lezen van /dev/urandom: $!"
+                if !defined $got;
+            die "te weinig random bytes uit /dev/urandom"
+                if $got == 0;
+
+            $buf .= $chunk;
+            $offset += $got;
+        }
+
+        close $fh;
+        return $buf;
+    }
+
+    # Windows/WAMP:
+    # gebruik de cryptografisch veilige RNG van .NET via PowerShell.
+    #
+    # We geven de bytes als Base64 terug om problemen met binaire output,
+    # CR/LF en Windows-pipes te vermijden.
+    if ($^O eq 'MSWin32') {
+        my $ps = join '',
+            '$b = New-Object byte[] ', $count, '; ',
+            '$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create(); ',
+            '$rng.GetBytes($b); ',
+            '$rng.Dispose(); ',
+            '[Console]::Out.Write([Convert]::ToBase64String($b));';
+
+        # Geen gebruikersinvoer komt in $ps terecht: $count is hierboven
+        # strikt gevalideerd als klein geheel getal.
+        my $encoded = qx{powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ps"};
+        my $exit = $? >> 8;
+
+        die "Windows random generator (PowerShell) is mislukt"
+            if $exit != 0 || !defined($encoded) || $encoded eq '';
+
+        $encoded =~ s/\s+\z//;
+        my $buf = decode_base64($encoded);
+
+        die "Windows random generator gaf onjuiste lengte terug"
+            if length($buf) != $count;
+
+        return $buf;
+    }
+
+    die "geen cryptografisch veilige random generator beschikbaar op dit platform";
 }
 
 sub _random_hex {
@@ -737,7 +1061,7 @@ sub _validate_settings {
     ref($s) eq 'HASH'
         or _json_error(400, 'settings-object verwacht');
 
-    my %sections = map { $_ => 1 } qw(alarm lamp display locale);
+    my %sections = map { $_ => 1 } qw(alarm lamp display agenda locale);
     for my $section (keys %$s) {
         $sections{$section}
             or _json_error(400, "onbekende settings-sectie: $section");
@@ -755,6 +1079,7 @@ sub _validate_settings {
             brightness on_duration_seconds night_mode night_start
             night_end visible_fields
         ) },
+        agenda => { map { $_ => 1 } qw(provider auto_sync_minutes) },
         locale => { map { $_ => 1 } qw(timezone region time_format) },
     );
 
@@ -770,6 +1095,30 @@ sub _validate_settings {
 
     length(encode_json($s)) <= $MAX_BODY
         or _json_error(413, 'settings te groot');
+}
+
+sub _clean_text {
+    my ($value, $min, $max, $fallback) = @_;
+    $value = '' if !defined $value;
+    $value =~ s/[\x00-\x1F\x7F]//g;
+    $value =~ s/^\s+|\s+$//g;
+    return $fallback if length($value) < $min || length($value) > $max;
+    return $value;
+}
+
+sub _normalize_myx_feed {
+    my ($value) = @_;
+    $value = '' if !defined $value;
+    $value =~ s/^\s+|\s+$//g;
+    $value =~ s/^webcal:\/\//https:\/\//i;
+
+    # Accepteer uitsluitend de vaste Aventus MyX InternetCalendar-feed.
+    $value =~ m{\Ahttps://aventus\.myx\.nl/api/InternetCalendar/feed/
+        ([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/
+        ([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\z}x
+        or _signal_error(400, 'Ongeldige MyX-feedlink. Gebruik de webcal-link uit MyX.');
+
+    return 'https://aventus.myx.nl/api/InternetCalendar/feed/' . lc($1) . '/' . lc($2);
 }
 
 sub _valid_device_id {

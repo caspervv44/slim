@@ -20,29 +20,32 @@ Wachtwoorden worden op de server alleen gehasht opgeslagen met
 PBKDF2-HMAC-SHA256 en een unieke salt. De Raspberry Pi gebruikt voor API-calls
 niet het gebruikerswachtwoord maar de aparte device key.
 
-MyX-feedlinks, Bearer-tokens en andere accountgeheimen worden bewust niet naar
-deze server gesynchroniseerd.
+Een MyX-feedlink kan via de beheerpagina worden ingesteld. De server bewaart
+die URL alleen tijdelijk in het apparaatrecord. De gekoppelde Pi haalt hem op
+met de aparte device key en bevestigt daarna de ontvangst; vervolgens wordt de
+feed-URL uit de serveropslag verwijderd. Bearer-tokens en schoolwachtwoorden
+worden nooit via deze server opgeslagen.
 
 ## Installeren op de webserver
 
 1. Upload `test2.pl` naar `/klok/test2.pl`.
-2. Maak het script uitvoerbaar:
-
-   ```sh
-   chmod 755 test2.pl
-   ```
-
-3. Gebruik bij voorkeur een opslagmap buiten de publieke webroot en geef de
-   CGI-gebruiker daar schrijfrechten. Stel waar mogelijk deze variabelen in:
+2. Deze installatie draait op Windows/WAMP met Perl uit:
 
    ```text
-   WEKKER_DATA_DIR=/home/<account>/private/wavesync
-   WEKKER_PUBLIC_URL=https://veendomain.nl/klok/test2.pl
+   C:/Perl64/bin/perl.exe
    ```
 
-   Als `WEKKER_DATA_DIR` niet is ingesteld probeert het script eerst
-   `.wavesync-data` naast het script en daarna `$HOME/.wavesync-data`.
-   Het script controleert zelf of de map schrijfbaar is.
+   Dat pad staat daarom bewust in de eerste regel van `test2.pl`.
+
+3. De bekende werkende standaardopslag is:
+
+   ```text
+   C:/wamp64/www/veendomain/klok/data/wavesync
+   ```
+
+   `WEKKER_DATA_DIR` kan dit overschrijven. Het script maakt een `.htaccess`
+   aan om directe HTTP-toegang tot deze data te blokkeren. Nog beter is een
+   private map buiten de webroot als WAMP daar schrijfrechten heeft.
 
 4. Controleer na upload in je browser:
 
@@ -53,7 +56,7 @@ deze server gesynchroniseerd.
    Een werkende installatie geeft JSON terug met onder andere:
 
    ```json
-   {"ok":true,"service":"wavesync","version":2,"storage_writable":true}
+   {"ok":true,"service":"wavesync","version":5,"storage_writable":true,"storage_backend":"file-per-device"}
    ```
 
 5. HTTPS moet ingeschakeld blijven. De sessiecookie gebruikt `Secure`,

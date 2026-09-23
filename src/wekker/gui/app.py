@@ -1,8 +1,8 @@
 """Fullscreen touchscreen-app (800x480) voor de Raspberry Pi.
 
 De lokale UI bevat alleen dagelijkse wekkerfuncties: klok, agenda en eenvoudige
-weergave-instellingen. MyX-koppeling en beheer horen uitsluitend in de webapp
-op poort 8080.
+weergave-instellingen. MyX-koppeling en uitgebreid beheer lopen via de externe
+WaveSync-beheerpagina op veendomain.nl.
 """
 
 from __future__ import annotations
@@ -441,7 +441,7 @@ class TouchApp:
 
         tk.Label(
             left,
-            text="MyX en roosterkoppeling beheer je via de lokale webapp.",
+            text="MyX en uitgebreide instellingen beheer je via de QR-code.",
             font=("DejaVu Sans", 9), fg=MUTED, bg=BG,
             wraplength=292, justify="left",
         ).pack(anchor="w", pady=(3, 0))
@@ -480,6 +480,11 @@ class TouchApp:
         )
         qr_holder.pack(side="left", anchor="n", padx=(0, 12))
         self._widgets["cloud_qr"] = qr_holder
+        try:
+            qr_holder.bind("<Button-1>", lambda _event: self._show_qr_overlay())
+            qr_holder.config(cursor="hand2")
+        except Exception:
+            pass
 
         details = tk.Frame(cloud_content, bg=CARD)
         details.pack(side="left", fill="both", expand=True)
@@ -579,6 +584,56 @@ class TouchApp:
                 image="", text="QR niet\nbeschikbaar",
                 width=15, height=7,
             )
+
+    def _show_qr_overlay(self) -> None:
+        """Toon de beheer-QR schermvullend zodat hij makkelijk scanbaar is."""
+        url = str(self._widgets.get("_qr_url") or "")
+        if not url:
+            return
+        tk = self._tk()
+        try:
+            import qrcode
+            from PIL import ImageTk
+
+            overlay = tk.Frame(self._root, bg=BG)
+            overlay.place(x=0, y=0, relwidth=1, relheight=1)
+            try:
+                overlay.lift()
+            except Exception:
+                pass
+
+            tk.Label(
+                overlay,
+                text="Scan om WaveSync te beheren",
+                font=("DejaVu Sans", 22, "bold"),
+                fg=TEXT,
+                bg=BG,
+            ).pack(pady=(18, 8))
+
+            image = qrcode.make(url).resize((320, 320))
+            photo = ImageTk.PhotoImage(image)
+            qr = tk.Label(overlay, image=photo, bg="#ffffff", bd=0)
+            qr.pack()
+            self._widgets["_qr_overlay_photo"] = photo
+
+            tk.Label(
+                overlay,
+                text="Tik ergens om te sluiten",
+                font=("DejaVu Sans", 10, "bold"),
+                fg=MUTED,
+                bg=BG,
+            ).pack(pady=(8, 0))
+
+            def close(_event=None) -> None:
+                try:
+                    overlay.destroy()
+                finally:
+                    self._widgets.pop("_qr_overlay_photo", None)
+
+            overlay.bind("<Button-1>", close)
+            qr.bind("<Button-1>", close)
+        except Exception as exc:
+            log.warning("grote QR-code kon niet worden getekend: %s", exc)
 
     @staticmethod
     def _timezone_label(zone: str) -> str:

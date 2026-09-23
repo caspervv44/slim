@@ -42,12 +42,18 @@ class CloudError(RuntimeError):
 
 
 def cloud_settings(settings: Any) -> dict[str, Any]:
-    """Alleen instellingen die veilig en nuttig zijn om extern te bewaren."""
+    """Instellingen die via het externe WaveSync-beheer mogen synchroniseren.
+
+    Geheimen zoals de MyX-feedlink horen bewust niet in dit object. De feed
+    gebruikt een apart, eenmalig aflevermechanisme zodat de URL na ophalen door
+    de Pi weer van de server kan worden verwijderd.
+    """
     data = settings.to_dict()
     return {
         "alarm": data["alarm"],
         "lamp": data["lamp"],
         "display": data["display"],
+        "agenda": data["agenda"],
         "locale": data["locale"],
     }
 
@@ -92,6 +98,8 @@ class CloudSettingsManager:
         self._lock = threading.Lock()
         self._worker: threading.Thread | None = None
         self._pending: dict[str, Any] | None = None
+        self._pending_feed: dict[str, Any] | None = None
+        self._feed_ack_id: str | None = None
         self._next_sync = 0.0
         self._status = "Online beheer voorbereiden…"
         self._error = ""
@@ -219,6 +227,21 @@ class CloudSettingsManager:
             self._pending = None
             return patch
 
+    def consume_feed_update(self) -> dict[str, Any] | None:
+        """Geef een nieuwe MyX-feedopdracht één keer door aan de hoofdthread."""
+        with self._lock:
+            update = self._pending_feed
+            self._pending_feed = None
+            return update
+
+    def acknowledge_feed_update(self, update_id: str) -> None:
+        """Plan een ACK zodat de server de tijdelijke feed-URL kan wissen."""
+        if not isinstance(update_id, str) or not update_id:
+            return
+        with self._lock:
+            self._feed_ack_id = update_id
+            self._next_sync = 0.0
+
     def sync_now_for_test(self, settings: Any) -> None:
         """Synchrone variant voor tests en diagnose, niet voor de GUI-thread."""
         self._sync_worker(cloud_settings(settings))
@@ -294,10 +317,36 @@ class CloudSettingsManager:
                     self._error = ""
                 return
 
+            with self._lock:
+                ack_id = self._feed_ack_id
+            if ack_id:
+                self._json_request(
+                    "ack_feed",
+                    {"update_id": ack_id},
+                    state=state,
+                )
+                with self._lock:
+                    if self._feed_ack_id == ack_id:
+                        self._feed_ack_id = None
+
             remote = self._json_request("pull", {}, state=state)
             remote_settings = remote.get("settings")
             if not isinstance(remote_settings, dict):
                 raise CloudError("cloudsettings hebben een ongeldig formaat")
+
+            feed_update = remote.get("myx_feed_update")
+            if isinstance(feed_update, dict):
+                update_id = str(feed_update.get("id", ""))
+                action = str(feed_update.get("action", ""))
+                if update_id and action in {"set", "clear"}:
+                    if action == "set" and not isinstance(feed_update.get("url"), str):
+                        raise CloudError("cloud gaf een ongeldige MyX-feedopdracht")
+                    with self._lock:
+                        self._pending_feed = {
+                            "id": update_id,
+                            "action": action,
+                            "url": str(feed_update.get("url", "")),
+                        }
 
             revision = int(remote.get("revision", 0))
             state["password_changed"] = bool(remote.get("password_changed", False))

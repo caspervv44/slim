@@ -10,7 +10,7 @@ from wekker.alarm.state import AlarmState
 from wekker.button.controller import ButtonController
 from wekker.clock import FakeClock
 from wekker.hardware.mock import MockDisplay, MockLamp, MockSpeaker
-from wekker.main import build_default, load_settings, maybe_auto_sync, run_once, shutdown
+from wekker.main import apply_runtime_settings, build_default, load_settings, maybe_auto_sync, run_once, shutdown
 from wekker.settings import default_settings
 from wekker.storage import JsonStore
 
@@ -122,3 +122,61 @@ def test_maybe_auto_sync_uit_bij_nul(tmp_path):
         {"agenda": {"auto_sync_minutes": 0}})
     assert maybe_auto_sync(rt) is False
     assert rt.ctx.cache.status == "never"
+
+
+def test_apply_runtime_settings_past_timezone_en_helderheid_direct_aan(tmp_path):
+    rt = build_default(tmp_path / "settings.json")
+
+    class Backlight:
+        def __init__(self):
+            self.values = []
+        def set_percent(self, value):
+            self.values.append(value)
+            return True
+
+    rt.backlight = Backlight()
+    nieuwe = rt.ctx.settings.update_from_dict({
+        "locale": {"timezone": "UTC", "time_format": "12h"},
+        "display": {"brightness": 37},
+    })
+
+    apply_runtime_settings(rt, nieuwe)
+
+    assert rt.ctx.settings.locale.timezone == "UTC"
+    assert getattr(rt.ctx.clock, "timezone_name", None) == "UTC"
+    assert rt.backlight.values[-1] == 37
+    assert JsonStore(tmp_path / "settings.json").load()["display"]["brightness"] == 37
+
+
+def test_cloud_feed_update_slaat_feed_lokaal_op_en_zet_myx_actief(tmp_path):
+    from wekker.agenda.myx_auth import MyXAuthManager, MyXCredentialStore
+    from wekker.main import _apply_cloud_feed_update
+
+    rt = build_default(tmp_path / "settings.json")
+    rt.ctx.myx_auth = MyXAuthManager(
+        store=MyXCredentialStore(tmp_path / "auth" / "myx-auth.json"),
+        profile_dir=tmp_path / "browser",
+    )
+
+    class Cloud:
+        def __init__(self):
+            self.acked = []
+        def acknowledge_feed_update(self, update_id):
+            self.acked.append(update_id)
+
+    rt.ctx.cloud = Cloud()
+    update = {
+        "id": "c" * 32,
+        "action": "set",
+        "url": (
+            "https://aventus.myx.nl/api/InternetCalendar/feed/"
+            "5b15df48-3191-4b06-b715-b838f38d7443/"
+            "f3ba8aef-daa5-444f-bde5-d5862f5f750e"
+        ),
+    }
+
+    _apply_cloud_feed_update(rt, update)
+
+    assert rt.ctx.settings.agenda.provider == "myx"
+    assert rt.ctx.myx_auth.feed_url() == update["url"]
+    assert rt.ctx.cloud.acked == ["c" * 32]

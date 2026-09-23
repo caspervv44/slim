@@ -1,4 +1,4 @@
-# WaveSync — eerste prototype (v0.2)
+# WaveSync — Raspberry Pi prototype
 
 Slimme wekker in Python die **zonder Raspberry Pi** op een Windows-laptop
 ontwikkeld en getest kan worden. Hardware zit achter interfaces; op de laptop
@@ -50,10 +50,11 @@ prototype start en werkt volledig zonder.
 - **Instellingen + opslag**: gevalideerde dataclasses (`alarm`, `lamp`,
   `display`, `agenda`), atomair JSON-schrijven met fsync, terugval op defaults
   bij corrupte opslag. Geen wachtwoorden/tokens; logs worden geredigeerd.
-- **Setup-API** (`src/wekker/api/server.py`): stdlib-HTTP (geen Flask nodig),
-  endpoints voor status, settings, agenda, providers, (demo-)login-flow,
-  lamp, speaker-test, alarm-dismiss en button-press + mobiele setup-pagina
-  op `/`. De wekker blijft zelfstandig werken zonder telefoon.
+- **Online beheer**: de productie-GUI start geen lokale webserver meer.
+  Instellingen lopen via de unieke QR-link naar
+  `https://veendomain.nl/klok/test2.pl`; de Pi synchroniseert wijzigingen
+  periodiek via HTTPS. De oude stdlib-API blijft alleen als developmentcode
+  aanwezig en wordt niet door `python -m wekker gui` gestart.
 - **Touchscreen-GUI** (`src/wekker/gui/`): fullscreen 800x480 (tkinter),
   hoofdscherm (tijd + alarm) en agendescherm met pijl-navigatie. Leest alle
   data uit de bestaande core/settings/agenda — geen eigen logica.
@@ -70,16 +71,22 @@ prototype start en werkt volledig zonder.
 - Python 3.11+ (ontwikkeld/getest op 3.12, Windows)
 - Alleen dev-dependency: `pytest`
 
-## Lokaal starten
+## Starten op de Raspberry Pi
 
-```powershell
-cd wekker
-pip install -e ".[dev]"
-python -m wekker --port 8080
-# open http://127.0.0.1:8080 voor de mobiele setup-pagina
+```bash
+cd ~/slim
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+python -m wekker gui
 ```
 
-Instellingen worden bewaard in `wekker-settings.json` (naast de startmap).
+`python -m wekker gui` start alleen de fullscreen klok. Er wordt geen lokale
+webserver op poort 8080 meer geopend. Online beheer loopt via de QR-code op het
+instellingenscherm en `veendomain.nl`.
+
+Instellingen worden lokaal bewaard in `wekker-settings.json`; de cloudidentiteit
+(device-ID, device key en eerste beheerwachtwoord) staat in
+`.wekker-cloud.json`.
 
 ## Simulatie (zonder Raspberry Pi)
 
@@ -109,24 +116,17 @@ Wat simulatie wel/niet bewijst:
 - Niet: echte GPIO-timing en debouncing op hardware, LED-helderheid,
   geluidskwaliteit, stroomgedrag en Wi-Fi — daarvoor blijft de Pi nodig.
 
-## Setup-app (telefoon, laptop, tablet)
+## Online beheer via veendomain.nl
 
-De webinterface is bereikbaar via het lokale netwerk:
+Op **Instellingen** toont de klok een unieke QR-code. Die opent de beheerpagina
+op `veendomain.nl`. Daar kunnen onder andere alarm, tijdzone, 12/24-uursweergave,
+schermhelderheid, nachtmodus, lampinstellingen, zichtbare velden en
+agenda-synchronisatie worden aangepast.
 
-```powershell
-# Alleen deze machine (default, veiligste):
-python -m wekker --port 8080
-# Lokaal netwerk (telefoon/tablet op dezelfde wifi):
-python -m wekker --host 0.0.0.0 --port 8080
-# open http://<ip-van-de-wekker>:8080/
-```
-
-Het dashboard toont status (SLEEPING/RINGING/DISMISSED), huidige tijd,
-volgend alarm, agenda-provider en verbinding. Verder: wektijd/speaker/lamp/
-lampduur instellen, lamp en speaker testen, alarm afhandelen, agenda-provider
-kiezen (mock of OSIRIS–ROC Aventus met demo-login), koppelstatus bekijken en
-agenda-syncstatus bekijken. Prototype met login (development: casper/casper);
-**niet** zonder meer op een open netwerk zetten (geen TLS in deze versie).
+De MyX iCalendar/Feed-link kan daar ook worden ingevoerd. De server bewaart die
+URL alleen tijdelijk: de gekoppelde Pi haalt hem met zijn aparte device key op
+en bevestigt daarna de ontvangst, waarna de URL uit de serveropslag wordt
+verwijderd.
 
 ## Touchscreen-GUI (800x480)
 
@@ -140,21 +140,18 @@ het agendescherm (OSIRIS-lessen of demo-data met badge). Op de Pi draait de GUI
 als echte kiosk (geen titlebar, geen desktop-panel); Escape sluit af.
 Details: `docs/touch-gui.md`.
 
-### MyX koppelen via de webinterface
+### MyX koppelen
 
-Start de webinterface op het lokale netwerk:
+Scan op de klok **Instellingen → Online beheer** de QR-code en log in met
+gebruikersnaam `basis` en het wachtwoord dat op het scherm staat. Plak op de
+beheerpagina de MyX Feed-link die begint met:
 
-```bash
-python -m wekker gui --host 0.0.0.0 --port 8080
+```text
+webcal://aventus.myx.nl/api/InternetCalendar/feed/...
 ```
 
-Open daarna `http://<ip-van-de-pi>:8080/`. De MyX-sectie begeleidt de student
-naar **Mijn rooster → ⋮ → Feed** en accepteert de permanente `webcal://`-link.
-Het ingebouwde touchscreen bevat geen instellingenmenu meer: daar blijven alleen
-de klok en agenda zichtbaar. Browser-SSO op het Pi-scherm is nog beschikbaar
-als fallback vanuit de webinterface.
-
-Details: `docs/myx-xedule.md`.
+Na opslaan haalt de Pi deze koppeling automatisch op en zet de agenda-provider
+op MyX. Een Bearer-token is hiervoor niet nodig.
 
 ## Tests draaien
 

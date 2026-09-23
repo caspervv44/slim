@@ -33,6 +33,7 @@ from wekker.button.controller import ButtonController
 from wekker.clock import SystemClock
 from wekker.cloud import CloudSettingsManager, DEFAULT_CLOUD_URL
 from wekker.display.manager import DisplayManager
+from wekker.display.backlight import BacklightController
 from wekker.hardware.interfaces import Button, DisplayDriver, Lamp, Speaker
 from wekker.hardware.mock import (
     MockButton,
@@ -61,6 +62,7 @@ class Runtime:
     speaker: Speaker
     lamp: Lamp
     driver: DisplayDriver
+    backlight: BacklightController | None = None
 
 
 def load_settings(store: JsonStore) -> Settings:
@@ -131,6 +133,72 @@ def build_default(
         lamp=lamp,
         driver=display_driver,
     )
+
+
+def _rebuild_sync_provider(rt: Runtime) -> None:
+    """Bouw de agenda-provider opnieuw na een provider- of feedwijziging."""
+    rt.ctx.sync = build_sync_provider(
+        rt.ctx.settings.agenda.provider,
+        rt.ctx.cache,
+        rt.ctx.clock,
+        rt.ctx.auth,
+        rt.ctx.myx_auth,
+    )
+
+
+def apply_runtime_settings(rt: Runtime, nieuwe: Settings) -> None:
+    """Pas gevalideerde instellingen direct toe op alle runtime-onderdelen."""
+    oude_provider = rt.ctx.settings.agenda.provider
+    rt.ctx.settings = nieuwe
+    rt.ctx.core.update_settings(nieuwe)
+    rt.ctx.display.update_settings(nieuwe)
+    rt.ctx.button.update_settings(nieuwe)
+
+    set_timezone = getattr(rt.ctx.clock, "set_timezone", None)
+    if callable(set_timezone):
+        set_timezone(nieuwe.locale.timezone)
+
+    if rt.backlight is not None:
+        rt.backlight.set_percent(nieuwe.display.brightness)
+
+    if nieuwe.agenda.provider != oude_provider:
+        _rebuild_sync_provider(rt)
+
+    rt.ctx.store.save(nieuwe.to_dict())
+
+
+def _apply_cloud_feed_update(rt: Runtime, update: dict) -> None:
+    """Pas een eenmalige MyX-feedopdracht van het webbeheer toe."""
+    cloud = getattr(rt.ctx, "cloud", None)
+    auth = getattr(rt.ctx, "myx_auth", None)
+    update_id = str(update.get("id", ""))
+    action = str(update.get("action", ""))
+    if not update_id or auth is None:
+        return
+
+    try:
+        if action == "set":
+            url = str(update.get("url", ""))
+            auth.save_feed(url)
+            if rt.ctx.settings.agenda.provider != "myx":
+                nieuwe = rt.ctx.settings.update_from_dict(
+                    {"agenda": {"provider": "myx"}}
+                )
+                apply_runtime_settings(rt, nieuwe)
+            else:
+                _rebuild_sync_provider(rt)
+        elif action == "clear":
+            auth.feed_store.clear()
+            _rebuild_sync_provider(rt)
+        else:
+            return
+    except Exception:
+        log.exception("MyX-feed uit online beheer kon niet worden toegepast")
+        return
+
+    if cloud is not None:
+        cloud.acknowledge_feed_update(update_id)
+    log.info("MyX-feedopdracht uit online beheer toegepast")
 
 
 def run_once(rt: Runtime) -> None:
@@ -204,17 +272,14 @@ def maybe_cloud_sync(rt: Runtime) -> None:
     if patch:
         try:
             nieuwe = rt.ctx.settings.update_from_dict(patch)
-            rt.ctx.settings = nieuwe
-            rt.ctx.core.update_settings(nieuwe)
-            rt.ctx.display.update_settings(nieuwe)
-            rt.ctx.button.update_settings(nieuwe)
-            set_timezone = getattr(rt.ctx.clock, "set_timezone", None)
-            if callable(set_timezone):
-                set_timezone(nieuwe.locale.timezone)
-            rt.ctx.store.save(nieuwe.to_dict())
+            apply_runtime_settings(rt, nieuwe)
             log.info("cloudinstellingen toegepast")
         except Exception:
             log.exception("cloudinstellingen waren ongeldig en zijn genegeerd")
+
+    feed_update = cloud.consume_feed_update()
+    if feed_update:
+        _apply_cloud_feed_update(rt, feed_update)
 
     try:
         cloud.maybe_sync(rt.ctx.settings)
@@ -250,9 +315,10 @@ def main(argv: list[str] | None = None) -> None:
     gui_p = sub.add_parser("gui", help="fullscreen touchscreen-GUI (800x480)")
     gui_p.add_argument("--window", action="store_true",
                        help="venster i.p.v. fullscreen (development op laptop)")
-    gui_p.add_argument("--host", default="127.0.0.1",
-                       help="bind-adres webinterface (0.0.0.0 = lokaal netwerk)")
-    gui_p.add_argument("--port", type=int, default=8080)
+    # Oude opties blijven geaccepteerd zodat bestaande startscripts niet breken.
+    # Er wordt geen lokale webserver meer gestart; beheer loopt via veendomain.nl.
+    gui_p.add_argument("--host", default=None, help=argparse.SUPPRESS)
+    gui_p.add_argument("--port", type=int, default=None, help=argparse.SUPPRESS)
     gui_p.add_argument("--settings", default="wekker-settings.json")
     args = parser.parse_args(argv)
     setup_logging()
@@ -281,7 +347,7 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def run_gui(args: argparse.Namespace) -> None:
-    """Start web-API + fullscreen touchscreen-GUI.
+    """Start de fullscreen touchscreen-GUI zonder lokale webserver.
 
     Op de Pi: ``python -m wekker gui`` (kiosk: volledig 800x480, geen
     titlebar/panel; Alt+Tab vervalt, Escape sluit af).
@@ -294,16 +360,19 @@ def run_gui(args: argparse.Namespace) -> None:
     except StorageError as exc:
         log.error("opslagfout: %s", exc)
         raise SystemExit(1) from exc
-    server = serve_forever(rt.ctx, host=args.host, port=args.port)
-    log.info("wekker gestart met touchscreen-GUI (fullscreen=%s). Stop met Esc.",
-             not args.window)
+    rt.backlight = BacklightController()
+    rt.backlight.set_percent(rt.ctx.settings.display.brightness)
+    log.info(
+        "WaveSync gestart met touchscreen-GUI (fullscreen=%s); "
+        "online beheer loopt via veendomain.nl.",
+        not args.window,
+    )
     try:
         launch_gui(rt, fullscreen=not args.window)
     except KeyboardInterrupt:
         log.info("stoppen…")
     finally:
         shutdown(rt)
-        server.shutdown()
 
 
 def run_simulate(args: argparse.Namespace) -> None:
