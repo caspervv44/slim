@@ -25,6 +25,7 @@ ALLOWED_VISIBLE_FIELDS = frozenset(
 )
 ALLOWED_BLINK_PATTERNS = frozenset({"steady", "blink", "pulse"})
 ALLOWED_NIGHT_MODES = frozenset({"off", "dim"})
+ALLOWED_THEMES = frozenset({"midnight", "ocean", "light", "amber"})
 #: Schoolplatformen die de setup-app mag aanbieden. Alleen "mock" heeft een
 #: werkende adapter; de rest is voorbereid maar "nog niet beschikbaar".
 ALLOWED_PROVIDERS = frozenset({"mock", "magister", "somtoday", "osiris", "myx"})
@@ -119,6 +120,7 @@ class LampSettings:
 @dataclass
 class DisplaySettings:
     brightness: int = 80
+    theme: str = "midnight"
     on_duration_seconds: int = 30
     night_mode: str = "dim"
     night_start: str = "23:00"
@@ -129,6 +131,11 @@ class DisplaySettings:
 
     def __post_init__(self) -> None:
         self.brightness = _check_range(self.brightness, "display.brightness", 0, 100)
+        if self.theme not in ALLOWED_THEMES:
+            raise SettingsError(
+                f"display.theme onbekend: {self.theme!r} "
+                f"(kies uit {sorted(ALLOWED_THEMES)})"
+            )
         self.on_duration_seconds = _check_range(
             self.on_duration_seconds, "display.on_duration_seconds", 1, 600
         )

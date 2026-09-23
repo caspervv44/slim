@@ -97,3 +97,11 @@ def test_gedeeltelijke_update_is_atomair():
 def test_roundtrip_dict():
     s = default_settings()
     assert Settings.from_dict(s.to_dict()).to_dict() == s.to_dict()
+
+
+def test_display_theme_wordt_gevalideerd():
+    from wekker.settings import DisplaySettings, SettingsError
+
+    assert DisplaySettings(theme="ocean").theme == "ocean"
+    with pytest.raises(SettingsError):
+        DisplaySettings(theme="neon-onbekend")

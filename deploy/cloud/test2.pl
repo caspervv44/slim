@@ -45,7 +45,7 @@ my %query = _parse_params($ENV{QUERY_STRING} || '');
 if ($method eq 'GET' && ($query{health} || '') eq '1') {
     _json_ok({
         service => 'wavesync',
-        version => 5,
+        version => 6,
         storage_writable => JSON::PP::true,
         storage_backend => 'file-per-device',
     });
@@ -123,7 +123,7 @@ sub _handle_api {
 
         my $salt = _random_hex(16);
         my $record = {
-            schema_version => 5,
+            schema_version => 6,
             device_id => $device_id,
             device_key_hash => sha256_hex($device_key),
             username => $username,
@@ -366,6 +366,11 @@ sub _web_save {
 
             $settings->{display}{brightness} =
                 _clamp_int($form->{brightness}, 0, 100, 80);
+            my %themes = map { $_ => 1 } qw(midnight ocean light amber);
+            $settings->{display}{theme} =
+                $themes{$form->{theme} || ''}
+                    ? $form->{theme}
+                    : ($settings->{display}{theme} || 'midnight');
             $settings->{display}{on_duration_seconds} =
                 _clamp_int($form->{display_on_duration}, 1, 600, 30);
 
@@ -587,6 +592,19 @@ sub _settings_page {
     my $night_off = ($s->{display}{night_mode} || '') eq 'off' ? ' selected' : '';
     my $night_dim = ($s->{display}{night_mode} || 'dim') eq 'dim' ? ' selected' : '';
 
+    my $theme = $s->{display}{theme} || 'midnight';
+    my @themes = (
+        ['midnight', 'Midnight'],
+        ['ocean', 'Ocean'],
+        ['light', 'Light'],
+        ['amber', 'Amber'],
+    );
+    my $theme_options = join '', map {
+        my ($value, $label) = @$_;
+        my $sel = $theme eq $value ? ' selected' : '';
+        '<option value="' . $value . '"' . $sel . '>' . $label . '</option>'
+    } @themes;
+
     my $blink_pattern = $s->{alarm}{blink_pattern} || 'blink';
     my $blink_options = join '', map {
         my $sel = $blink_pattern eq $_ ? ' selected' : '';
@@ -614,8 +632,7 @@ sub _settings_page {
         : '<span class="pill">Nog geen MyX-feed</span>';
 
     return _page('Instellingen', qq{
-<div class="shell">
-<header>
+<div class="shell theme-@{[_h($theme)]}">\n<header>
   <div><div class="brand">WaveSync</div><div class="muted">Online beheer</div></div>
   <form method="post">
     <input type="hidden" name="action" value="logout">
@@ -651,6 +668,7 @@ $saved$pw$err
 <h2>Scherm &amp; tijd</h2>
 <label>Schermhelderheid <span class="value-note">@{[int($s->{display}{brightness} // 80)]}%</span>
 <input type="range" min="0" max="100" name="brightness" value="@{[int($s->{display}{brightness} // 80)]}"></label>
+<label>Thema<select name="theme">$theme_options</select></label>
 <label>Scherm actief na bediening (seconden)<input type="number" min="1" max="600" name="display_on_duration" value="@{[int($s->{display}{on_duration_seconds} // 30)]}"></label>
 <label>Nachtmodus<select name="night_mode"><option value="dim"$night_dim>Dimmen</option><option value="off"$night_off>Scherm uit</option></select></label>
 <div class="split"><label>Nacht start<input type="time" name="night_start" value="@{[_h($s->{display}{night_start} || '23:00')]}"></label>
@@ -1076,7 +1094,7 @@ sub _validate_settings {
         ) },
         lamp => { map { $_ => 1 } qw(duration_after_button on_with_alarm) },
         display => { map { $_ => 1 } qw(
-            brightness on_duration_seconds night_mode night_start
+            brightness theme on_duration_seconds night_mode night_start
             night_end visible_fields
         ) },
         agenda => { map { $_ => 1 } qw(provider auto_sync_minutes) },

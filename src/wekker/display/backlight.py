@@ -3,7 +3,8 @@
 De code probeert achtereenvolgens:
 1. Linux sysfs (/sys/class/backlight), de echte hardware-backlight.
 2. ``brightnessctl`` als dat geïnstalleerd is.
-3. ``xrandr --brightness`` als softwarematige fallback onder X11.
+3. ``ddcutil`` voor HDMI/DisplayPort-schermen met DDC/CI.
+4. ``xrandr --brightness`` als softwarematige fallback onder X11.
 
 Er wordt nooit ``sudo`` gebruikt. Als de gebruiker geen schrijfrechten heeft,
 wordt dat gelogd en blijft de klok gewoon werken.
@@ -38,7 +39,12 @@ class BacklightController:
         if self._last_percent == percent:
             return True
 
-        methods = (self._set_sysfs, self._set_brightnessctl, self._set_xrandr)
+        methods = (
+            self._set_sysfs,
+            self._set_brightnessctl,
+            self._set_ddcutil,
+            self._set_xrandr,
+        )
         for method in methods:
             try:
                 if method(percent):
@@ -51,7 +57,7 @@ class BacklightController:
         if not self._warned:
             log.warning(
                 "schermhelderheid kon niet worden toegepast; "
-                "controleer /sys/class/backlight-rechten of installeer brightnessctl"
+                "geen bruikbare backlight-driver gevonden; probeer brightnessctl of ddcutil"
             )
             self._warned = True
         return False
@@ -96,6 +102,25 @@ class BacklightController:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=4,
+            check=False,
+        )
+        return result.returncode == 0
+
+    def _set_ddcutil(self, percent: int) -> bool:
+        """Gebruik DDC/CI voor externe HDMI/DP-schermen als dat beschikbaar is.
+
+        Dit helpt juist op systemen waar ``/sys/class/backlight`` leeg is.
+        Niet elk touchscreen ondersteunt DDC/CI; falen is daarom geen fout.
+        """
+        exe = shutil.which("ddcutil")
+        if not exe:
+            return False
+        result = subprocess.run(
+            [exe, "--noverify", "setvcp", "10", str(percent)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=8,
             check=False,
         )
         return result.returncode == 0

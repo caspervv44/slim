@@ -283,3 +283,17 @@ def test_provider_gebruikt_stabiele_feed_zonder_bearer():
     assert len(lessen) == 2
     assert gezien["url"] == feed
     assert gezien["auth"] is None
+
+
+def test_lokaal_wordt_ook_uit_vendorveld_gehaald():
+    tekst = """BEGIN:VCALENDAR
+BEGIN:VEVENT
+SUMMARY:Project
+DTSTART;TZID=W. Europe Standard Time:20260924T133000
+DTEND;TZID=W. Europe Standard Time:20260924T150000
+X-ALT-DESC;FMTTYPE=text/html:<div>FABA +4<br>LVM-E2.12 / E2.14 - LVM +1<br>533LVM6A-1A +2</div>
+END:VEVENT
+END:VCALENDAR
+"""
+    les = parse_ics(tekst)[0]
+    assert les.room == "LVM-E2.12 / E2.14"

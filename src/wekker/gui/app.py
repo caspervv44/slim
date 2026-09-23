@@ -27,16 +27,52 @@ from wekker.gui.screens import (
 log = logging.getLogger(__name__)
 REFRESH_MS = 1000
 
-# Rustig donker ontwerp met voldoende contrast voor een nachtkastje.
-BG = "#08111f"
-CARD = "#101c2e"
-CARD_ALT = "#132239"
-TEXT = "#f8fafc"
-MUTED = "#8ea2bd"
-ACCENT = "#4f8cff"
-ACCENT_DARK = "#2f63bd"
-BORDER = "#1e3049"
-SUCCESS = "#55d6a3"
+# Thema's voor het fysieke WaveSync-scherm. De kleuren worden bij een
+# themawissel centraal toegepast zodat alle drie schermen dezelfde stijl houden.
+THEMES = {
+    "midnight": {
+        "bg": "#08111f", "card": "#101c2e", "card_alt": "#132239",
+        "text": "#f8fafc", "muted": "#8ea2bd", "accent": "#4f8cff",
+        "accent_dark": "#2f63bd", "border": "#1e3049", "success": "#55d6a3",
+    },
+    "ocean": {
+        "bg": "#071a22", "card": "#0d2933", "card_alt": "#123743",
+        "text": "#eefcff", "muted": "#91bac4", "accent": "#42c7e8",
+        "accent_dark": "#1689a6", "border": "#1b4855", "success": "#5de0af",
+    },
+    "light": {
+        "bg": "#edf3f8", "card": "#ffffff", "card_alt": "#e4edf5",
+        "text": "#172033", "muted": "#617286", "accent": "#2563eb",
+        "accent_dark": "#cfe0ff", "border": "#cbd7e3", "success": "#17795a",
+    },
+    "amber": {
+        "bg": "#160f08", "card": "#251a0e", "card_alt": "#342416",
+        "text": "#fff7e8", "muted": "#c5a77f", "accent": "#ffb020",
+        "accent_dark": "#9a5a00", "border": "#4d361f", "success": "#64d8a4",
+    },
+}
+THEME_CHOICES = (
+    ("midnight", "Midnight"),
+    ("ocean", "Ocean"),
+    ("light", "Light"),
+    ("amber", "Amber"),
+)
+
+def _set_theme_palette(theme: str) -> None:
+    """Werk de modulekleuren bij voor de gekozen GUI-stijl."""
+    global BG, CARD, CARD_ALT, TEXT, MUTED, ACCENT, ACCENT_DARK, BORDER, SUCCESS
+    palette = THEMES.get(theme, THEMES["midnight"])
+    BG = palette["bg"]
+    CARD = palette["card"]
+    CARD_ALT = palette["card_alt"]
+    TEXT = palette["text"]
+    MUTED = palette["muted"]
+    ACCENT = palette["accent"]
+    ACCENT_DARK = palette["accent_dark"]
+    BORDER = palette["border"]
+    SUCCESS = palette["success"]
+
+_set_theme_palette("midnight")
 
 TIMEZONE_CHOICES = (
     ("Europe/Amsterdam", "Amsterdam · CET/CEST"),
@@ -77,6 +113,7 @@ def build_gui_data(runtime: Any, agenda_day: date | None = None) -> GuiData:
             timezone=ctx.settings.locale.timezone,
             time_format=ctx.settings.locale.time_format,
             region=ctx.settings.locale.region,
+            theme=ctx.settings.display.theme,
             provider=ctx.settings.agenda.provider,
             **_cloud_screen_kwargs(ctx),
         ),
@@ -112,6 +149,11 @@ class TouchApp:
         self._nav = navigator or Navigator()
         self._running = True
         self._agenda_day: date | None = None
+        try:
+            self._active_theme = str(getattr(runtime.ctx.settings.display, "theme", "midnight"))
+        except AttributeError:
+            self._active_theme = "midnight"
+        _set_theme_palette(self._active_theme)
 
         root.title("WaveSync")
         try:
@@ -150,6 +192,22 @@ class TouchApp:
         return build_gui_data(self._runtime, self._agenda_day)
 
     def render(self) -> dict:
+        try:
+            wanted_theme = str(getattr(self._runtime.ctx.settings.display, "theme", "midnight"))
+        except AttributeError:
+            wanted_theme = self._active_theme
+        if wanted_theme != self._active_theme:
+            self._active_theme = wanted_theme
+            _set_theme_palette(wanted_theme)
+            try:
+                self._root.config(bg=BG)
+                self._frame.config(bg=BG)
+            except Exception:
+                pass
+            # Bestaande Tk-widgets behouden hun oude kleuren; bouw het huidige
+            # scherm daarom één keer volledig opnieuw op.
+            self._screen = None
+
         layout = layout_for(self._nav, self._data())
         if layout["screen"] != self._screen:
             self._rebuild(layout)
@@ -200,6 +258,7 @@ class TouchApp:
     def _build_main(self, layout: dict) -> None:
         tk = self._tk()
         self._top_title("WaveSync")
+        self._render_nav()
 
         body = tk.Frame(self._frame, bg=BG)
         body.pack(fill="both", expand=True, padx=28)
@@ -226,7 +285,6 @@ class TouchApp:
 
         self._widgets["time"] = time_label
         self._widgets["alarm"] = alarm_label
-        self._render_nav()
 
     def _update_main(self, layout: dict) -> None:
         self._set_text(self._widgets["time"], layout["time"])
@@ -237,6 +295,9 @@ class TouchApp:
     def _build_agenda(self, layout: dict) -> None:
         tk = self._tk()
         self._top_title("Agenda", layout.get("provider", ""))
+        # Reserveer de onderste navigatie vóór de uitzettende agenda-inhoud.
+        # Zo kan een volle schooldag de knoppen nooit buiten beeld duwen.
+        self._render_nav()
 
         selector = tk.Frame(self._frame, bg=BG)
         selector.pack(fill="x", padx=28, pady=(2, 8))
@@ -286,20 +347,20 @@ class TouchApp:
         row_widgets = []
         for row in layout["rows"]:
             card = tk.Frame(content, bg=CARD_ALT, bd=0)
-            card.pack(fill="x", pady=3)
+            card.pack(fill="x", pady=2)
 
             time_label = tk.Label(
                 card, text=f'{row["start"]} – {row["end"]}',
-                font=("DejaVu Sans", 16, "bold"), fg=ACCENT, bg=CARD_ALT,
+                font=("DejaVu Sans", 14, "bold"), fg=ACCENT, bg=CARD_ALT,
                 width=13, anchor="w",
             )
-            time_label.pack(side="left", padx=(13, 4), pady=8)
+            time_label.pack(side="left", padx=(13, 4), pady=6)
 
             info = tk.Frame(card, bg=CARD_ALT)
-            info.pack(side="left", fill="both", expand=True, pady=6)
+            info.pack(side="left", fill="both", expand=True, pady=4)
 
             subject = tk.Label(
-                info, text=row["subject"], font=("DejaVu Sans", 16, "bold"),
+                info, text=row["subject"], font=("DejaVu Sans", 14, "bold"),
                 fg=TEXT, bg=CARD_ALT, anchor="w", justify="left",
             )
             subject.pack(fill="x")
@@ -310,7 +371,7 @@ class TouchApp:
             if row.get("room"):
                 meta_parts.append(f'Lokaal: {row["room"]}')
             meta = tk.Label(
-                info, text="   ·   ".join(meta_parts), font=("DejaVu Sans", 10),
+                info, text="   ·   ".join(meta_parts), font=("DejaVu Sans", 9),
                 fg=MUTED, bg=CARD_ALT, anchor="w",
             )
             meta.pack(fill="x")
@@ -331,7 +392,6 @@ class TouchApp:
             })
 
         self._widgets["rows"] = row_widgets
-        self._render_nav()
 
     def _update_agenda(self, layout: dict) -> None:
         rows = self._widgets.get("rows", [])
@@ -375,6 +435,7 @@ class TouchApp:
     def _build_settings(self, layout: dict) -> None:
         tk = self._tk()
         self._top_title("Instellingen")
+        self._render_nav()
 
         body = tk.Frame(self._frame, bg=BG)
         body.pack(fill="both", expand=True, padx=24, pady=(4, 0))
@@ -436,8 +497,35 @@ class TouchApp:
             activebackground=ACCENT, activeforeground=TEXT,
             bd=0, pady=8, command=self._toggle_time_format,
         )
-        toggle.pack(fill="x", padx=12, pady=(7, 11))
+        toggle.pack(fill="x", padx=12, pady=(7, 8))
         self._widgets["time_format"] = toggle
+
+        tk.Label(
+            fmt_card, text="Thema", font=("DejaVu Sans", 10, "bold"),
+            fg=MUTED, bg=CARD, anchor="w",
+        ).pack(fill="x", padx=14, pady=(0, 3))
+        theme_labels = [label for _value, label in THEME_CHOICES]
+        self._theme_by_label = {label: value for value, label in THEME_CHOICES}
+        theme_var = tk.StringVar(value=self._theme_label(layout.get("theme", "midnight")))
+        theme_menu = tk.OptionMenu(
+            fmt_card, theme_var, *theme_labels,
+            command=self._select_theme,
+        )
+        theme_menu.config(
+            font=("DejaVu Sans", 10, "bold"), fg=TEXT, bg=CARD_ALT,
+            activebackground=ACCENT_DARK, activeforeground=TEXT,
+            bd=0, highlightthickness=0, anchor="w", padx=8, pady=5,
+        )
+        try:
+            theme_menu["menu"].config(
+                font=("DejaVu Sans", 10), fg=TEXT, bg=CARD_ALT,
+                activebackground=ACCENT_DARK, activeforeground=TEXT,
+            )
+        except Exception:
+            pass
+        theme_menu.pack(fill="x", padx=12, pady=(0, 10))
+        self._widgets["theme_var"] = theme_var
+        self._widgets["theme_menu"] = theme_menu
 
         tk.Label(
             left,
@@ -525,7 +613,6 @@ class TouchApp:
         ).pack(fill="x", pady=(5, 0))
 
         self._refresh_qr(layout)
-        self._render_nav()
 
     def _update_settings(self, layout: dict) -> None:
         zone_var = self._widgets.get("timezone_var")
@@ -537,6 +624,14 @@ class TouchApp:
             except Exception:
                 pass
         self._set_text(self._widgets["time_format"], self._format_label(layout["time_format"]))
+        theme_var = self._widgets.get("theme_var")
+        if theme_var is not None:
+            try:
+                wanted_theme = self._theme_label(layout.get("theme", "midnight"))
+                if theme_var.get() != wanted_theme:
+                    theme_var.set(wanted_theme)
+            except Exception:
+                pass
         self._set_text(self._widgets["cloud_status"], layout.get("cloud_status", ""))
         self._set_text(self._widgets["cloud_error"], layout.get("cloud_error", ""))
         self._set_text(
@@ -642,6 +737,26 @@ class TouchApp:
     @staticmethod
     def _format_label(value: str) -> str:
         return "24 uur · 20:41" if value == "24h" else "12 uur · 8:41 PM"
+
+    @staticmethod
+    def _theme_label(value: str) -> str:
+        return dict(THEME_CHOICES).get(value, "Midnight")
+
+    def _select_theme(self, label: str) -> None:
+        theme = getattr(self, "_theme_by_label", {}).get(label)
+        if not theme:
+            return
+        ctx = self._runtime.ctx
+        try:
+            nieuwe = ctx.settings.update_from_dict({"display": {"theme": theme}})
+            # Gebruik dezelfde runtime-hook als cloudsettings zodat het thema
+            # direct zichtbaar wordt en niet pas na een herstart.
+            from wekker.main import apply_runtime_settings
+            apply_runtime_settings(self._runtime, nieuwe)
+        except Exception:
+            log.exception("thema opslaan faalde")
+            return
+        self.render()
 
     def _select_timezone(self, label: str) -> None:
         zone = getattr(self, "_zone_by_label", {}).get(label)

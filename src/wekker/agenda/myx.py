@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import html
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -147,22 +148,67 @@ def _extract_labeled(description: str, labels: tuple[str, ...]) -> str:
             return waarde.strip()
     return ""
 
-def _extract_room_candidates(description: str) -> str:
-    """Zoek MyX-lokalen in ongelabelde DESCRIPTION-regels.
+def _extract_room_candidates(text: str) -> str:
+    """Zoek lokaalcodes in vrije MyX/Xedule-tekst.
 
-    Sommige Xedule-feeds zetten het lokaal niet in ``LOCATION`` maar als een
-    losse regel, bijvoorbeeld ``LVM-E2.20 / E2.14 - LVM``. We nemen alleen
-    tokens met een duidelijk lokaalpatroon zodat klas-/groepscodes zoals
-    ``533LVM6A-1C`` niet als lokaal worden weergegeven.
+    De feed zet lokalen niet consequent in ``LOCATION``. In praktijk komen ze
+    ook voor in DESCRIPTION, HTML-fragmenten en vendorvelden. De herkenning is
+    daarom bewust gebaseerd op het lokaalpatroon zelf en niet op één ICS-key.
+
+    Voorbeelden die worden herkend:
+    ``LVM-E2.12``, ``E2.14``, ``B1.03`` en ``A0.12``.
     """
+    if not text:
+        return ""
+
+    # HTML uit Xedule normaliseren voordat we zoeken.
+    text = html.unescape(text)
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+
     found: list[str] = []
-    # Voorbeelden: LVM-E2.20, E2.14, B1.03, A0.12.
-    pattern = re.compile(r"\b(?:[A-Z]{2,6}-)?[A-Z]\d{1,2}(?:\.\d{1,3})+\b")
-    for line in description.splitlines():
-        for candidate in pattern.findall(line.upper()):
-            if candidate not in found:
-                found.append(candidate)
-    return " / ".join(found[:3])
+    pattern = re.compile(
+        r"\b(?:[A-Z]{2,8}-)?[A-Z]\d{1,2}(?:[.-]\d{1,3})+\b",
+        re.I,
+    )
+    for candidate in pattern.findall(text.upper()):
+        candidate = candidate.replace("-", "-", 1).strip()
+        if candidate not in found:
+            found.append(candidate)
+    return " / ".join(found[:4])
+
+
+def _extract_event_room(
+    event: dict[str, list[tuple[dict[str, str], str]]],
+    description: str,
+    location: str,
+) -> str:
+    """Vind een lokaal onafhankelijk van waar MyX het in VEVENT plaatst."""
+    if location:
+        return location
+
+    labeled = _extract_labeled(description, ("Lokaal", "Locatie", "Room"))
+    if labeled:
+        return labeled
+
+    # Eerst DESCRIPTION, daarna alle overige tekstvelden. Hierdoor werken ook
+    # feeds waarin Xedule de zichtbare locatie in X-ALT-DESC, COMMENT,
+    # RESOURCES of een vendor-specifieke eigenschap plaatst.
+    candidates = _extract_room_candidates(description)
+    if candidates:
+        return candidates
+
+    searchable: list[str] = []
+    skip = {"DTSTART", "DTEND", "DTSTAMP", "UID", "CREATED", "LAST-MODIFIED"}
+    for name, values in event.items():
+        if name in skip:
+            continue
+        for _params, value in values:
+            try:
+                searchable.append(_unescape_text(value))
+            except Exception:
+                searchable.append(value)
+    return _extract_room_candidates("\n".join(searchable))
 
 
 def parse_ics(text: str) -> list[Lesson]:
@@ -221,10 +267,7 @@ def parse_ics(text: str) -> list[Lesson]:
         subject = _unescape_text(summary_raw)
         description = _unescape_text(event.get("DESCRIPTION", [({}, "")])[0][1])
         location = _unescape_text(event.get("LOCATION", [({}, "")])[0][1])
-        if not location:
-            location = _extract_labeled(description, ("Lokaal", "Locatie", "Room"))
-        if not location:
-            location = _extract_room_candidates(description)
+        location = _extract_event_room(event, description, location)
         teacher = _extract_labeled(description, ("Docent", "Teacher", "Begeleider"))
 
         try:

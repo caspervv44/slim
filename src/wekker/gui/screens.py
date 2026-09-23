@@ -120,6 +120,7 @@ class SettingsScreenData:
     timezone: str = "Europe/Amsterdam"
     time_format: str = "24h"
     region: str = "NL"
+    theme: str = "midnight"
     # Oude velden blijven als compatibiliteitsmarge aanwezig, maar worden
     # bewust nergens op het lokale instellingen-scherm getoond.
     provider: str = "mock"
@@ -229,6 +230,7 @@ def settings_layout(data: SettingsScreenData) -> dict:
         "timezone": data.timezone,
         "time_format": data.time_format,
         "region": data.region,
+        "theme": data.theme,
         "cloud_ready": data.cloud_ready,
         "cloud_url": data.cloud_url,
         "cloud_username": data.cloud_username,
