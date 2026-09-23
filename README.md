@@ -1,4 +1,4 @@
-# Aventus Wekker — eerste prototype (v0.2)
+# WaveSync — eerste prototype (v0.2)
 
 Slimme wekker in Python die **zonder Raspberry Pi** op een Windows-laptop
 ontwikkeld en getest kan worden. Hardware zit achter interfaces; op de laptop

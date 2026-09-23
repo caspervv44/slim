@@ -52,6 +52,20 @@ def test_ics_parsing_meerdere_lessen_en_velden():
     assert all(les.source == "myx" for les in lessen)
 
 
+
+def test_lokaal_wordt_uit_ongelabelde_myx_description_gehaald():
+    tekst = """BEGIN:VCALENDAR
+BEGIN:VEVENT
+SUMMARY:Netwerkbeheer
+DTSTART;TZID=W. Europe Standard Time:20260921T133000
+DTEND;TZID=W. Europe Standard Time:20260921T150000
+DESCRIPTION:KAMJ\\nLVM-E2.20 / E2.14 - LVM\\n533LVM6A-1C
+END:VEVENT
+END:VCALENDAR
+"""
+    les = parse_ics(tekst)[0]
+    assert les.room == "LVM-E2.20 / E2.14"
+
 def test_lege_geldige_agenda():
     assert parse_ics("BEGIN:VCALENDAR\nVERSION:2.0\nEND:VCALENDAR\n") == []
 

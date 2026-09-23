@@ -1,4 +1,4 @@
-# Hardware-inventarisatie — Aventus Wekker, eerste prototype
+# Hardware-inventarisatie — WaveSync, eerste prototype
 
 Datum: 2026-09-17. Status: **er is nog geen fysieke hardware waargenomen of
 aangesloten.** Alles hieronder wat niet onder "platformachtergrond" staat is

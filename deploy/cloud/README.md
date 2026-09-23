@@ -1,19 +1,24 @@
-# Online instellingenserver (`test2.pl`)
+# WaveSync online instellingenserver (`test2.pl`)
 
 Dit CGI-script hoort op:
 
 `https://veendomain.nl/klok/test2.pl`
 
-De Raspberry Pi registreert zichzelf de eerste keer automatisch. De server maakt dan:
+De Raspberry Pi maakt bij de eerste start lokaal een cryptografisch willekeurige
+256-bit device-ID, een aparte 256-bit device key en een startwachtwoord van
+16 tekens aan. Daardoor kan de QR-code direct op het scherm verschijnen, zelfs
+als de webserver tijdelijk niet bereikbaar is. Zodra de verbinding beschikbaar
+is registreert de Pi deze identiteit op de server.
 
-- een willekeurige 256-bit wekker-ID voor de beheer-URL;
-- een afzonderlijke 256-bit API-sleutel die alleen op de Pi wordt opgeslagen;
+De menselijke beheerpagina gebruikt:
+
 - gebruikersnaam `basis`;
-- een willekeurig startwachtwoord van 16 tekens.
+- het willekeurige startwachtwoord van 16 tekens;
+- een niet-oplopende 256-bit beheer-ID in de URL.
 
-De menselijke beheerpagina vereist altijd de gebruikersnaam + het wachtwoord.
-Wachtwoorden worden met PBKDF2-HMAC-SHA256 en een unieke salt opgeslagen.
-De API gebruikt niet hetzelfde wachtwoord maar een aparte device key.
+Wachtwoorden worden op de server alleen gehasht opgeslagen met
+PBKDF2-HMAC-SHA256 en een unieke salt. De Raspberry Pi gebruikt voor API-calls
+niet het gebruikerswachtwoord maar de aparte device key.
 
 MyX-feedlinks, Bearer-tokens en andere accountgeheimen worden bewust niet naar
 deze server gesynchroniseerd.
@@ -27,37 +32,54 @@ deze server gesynchroniseerd.
    chmod 755 test2.pl
    ```
 
-3. Zorg dat CGI/Perl voor `.pl` al werkt. Omdat `test.pl` op dezelfde server
-   al werkt, is dat waarschijnlijk al ingesteld.
-4. Gebruik bij voorkeur een opslagmap **buiten** de publieke webroot en geef
-   de CGI-gebruiker daar schrijfrechten. Stel vervolgens in Apache/Plesk de
-   environment variables in:
+3. Gebruik bij voorkeur een opslagmap buiten de publieke webroot en geef de
+   CGI-gebruiker daar schrijfrechten. Stel waar mogelijk deze variabelen in:
 
    ```text
-   WEKKER_DATA_DIR=/home/<account>/private/aventus-wekker
+   WEKKER_DATA_DIR=/home/<account>/private/wavesync
    WEKKER_PUBLIC_URL=https://veendomain.nl/klok/test2.pl
    ```
 
-   Als `WEKKER_DATA_DIR` niet is ingesteld, gebruikt het script
-   `/klok/.clock-data`. Het script zet daar automatisch een `.htaccess` in die
-   directe webtoegang weigert. Buiten de webroot blijft de veiligste keuze.
+   Als `WEKKER_DATA_DIR` niet is ingesteld probeert het script eerst
+   `.wavesync-data` naast het script en daarna `$HOME/.wavesync-data`.
+   Het script controleert zelf of de map schrijfbaar is.
 
-5. HTTPS moet ingeschakeld blijven. De sessiecookie heeft `Secure`,
+4. Controleer na upload in je browser:
+
+   ```text
+   https://veendomain.nl/klok/test2.pl?health=1
+   ```
+
+   Een werkende installatie geeft JSON terug met onder andere:
+
+   ```json
+   {"ok":true,"service":"wavesync","version":2,"storage_writable":true}
+   ```
+
+5. HTTPS moet ingeschakeld blijven. De sessiecookie gebruikt `Secure`,
    `HttpOnly` en `SameSite=Strict`.
+
+## Diagnose vanaf de Raspberry Pi
+
+```bash
+curl -i 'https://veendomain.nl/klok/test2.pl?health=1'
+```
+
+Als dit geen HTTP 200 met JSON geeft, controleer dan de CGI error-log en de
+schrijfrechten van `WEKKER_DATA_DIR`.
 
 ## Schaalbaarheid
 
-Iedere wekker krijgt een eigen JSON-bestand en een eigen file-lock. Daardoor
-schrijven verschillende gebruikers niet in hetzelfde bestand en kunnen
-honderden wekkers naast elkaar worden opgeslagen zonder één gedeeld JSON-bestand
-dat bij iedere wijziging volledig wordt gelockt.
+Iedere WaveSync krijgt een eigen JSON-bestand en file-lock. Daardoor kunnen
+honderden apparaten onafhankelijk synchroniseren zonder één groot gedeeld
+bestand te locken. De device-ID's zijn willekeurig en niet afleidbaar van
+andere gebruikers.
 
-Voor zeer grote aantallen (duizenden/tien-duizenden apparaten) is een database
-zoals PostgreSQL een logische volgende stap, maar voor honderden apparaten is
-deze per-device opslag bewust eenvoudig gehouden.
+Voor veel grotere installaties is een database zoals PostgreSQL een logische
+volgende stap.
 
 ## Back-up
 
-Maak back-ups van `WEKKER_DATA_DIR`. Zonder die map blijven de fysieke wekkers
-werken met hun lokale instellingen, maar bestaande online beheeraccounts zijn
-dan niet meer beschikbaar.
+Maak back-ups van `WEKKER_DATA_DIR`. Zonder die map blijven fysieke WaveSyncs
+werken met hun lokale instellingen, maar bestaande online beheeraccounts gaan
+verloren.

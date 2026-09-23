@@ -192,7 +192,7 @@ def test_dashboard_bevat_alle_onderdelen(tmp_path):
         # Ingelogd: volledig dashboard.
         status, html = _get_html(server, "/")
         assert status == 200
-        for marker in ("Aventus Wekker", "Status", "Volgende alarm", "Agenda",
+        for marker in ("WaveSync", "Status", "Volgende alarm", "Agenda",
                        "Verbinding", "Lamp", "Speaker", "Instellingen",
                        "s.timezone", "Uitloggen"):
             # s.timezone: dashboard toont de tijdzone bij de status (dynamisch).

@@ -1,4 +1,4 @@
-# Architectuur — Aventus Wekker, eerste prototype (v0.2)
+# Architectuur — WaveSync, eerste prototype (v0.2)
 
 ## Doel en scope
 

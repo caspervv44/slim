@@ -1,4 +1,4 @@
-# Touchscreen-GUI — 5-inch 800x480 (Aventus Wekker)
+# Touchscreen-GUI — 5-inch 800x480 (WaveSync)
 
 ## Overzicht
 

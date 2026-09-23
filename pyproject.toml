@@ -5,7 +5,7 @@ description = "Slimme fysieke schoolwekker — softwarebasis (laptop-testbaar, P
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Aventus projectteam" }]
+authors = [{ name = "WaveSync projectteam" }]
 dependencies = ["qrcode[pil]>=7.4,<9"]
 
 [project.optional-dependencies]

@@ -107,7 +107,7 @@ class AppContext:
 INDEX_HTML = """<!doctype html>
 <html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Aventus Wekker</title>
+<title>WaveSync</title>
 <style>
 :root{
   color-scheme:light;--blue:#2563eb;--blue2:#1d4ed8;--ink:#172033;--muted:#657087;
@@ -146,7 +146,7 @@ pre{white-space:pre-wrap;word-break:break-word;background:#f7f9fc;border-radius:
 @media(max-width:760px){.span-4,.span-6,.span-8{grid-column:span 12}.lesson{grid-template-columns:72px 1fr}.room{grid-column:2}.feed-box{grid-template-columns:1fr}.wrap{padding:12px}}
 </style></head>
 <body>
-<header><div class="header-inner"><div class="brand">Aventus Wekker</div>
+<header><div class="header-inner"><div class="brand">WaveSync</div>
 <div class="subtitle">Instellen en MyX koppelen via je browser — het wekkerdisplay blijft alleen voor de wekker zelf.</div></div></header>
 <main class="wrap">
 <div id="error"></div><div id="err" style="display:none"></div><div id="success"></div>
@@ -284,7 +284,7 @@ button.primary{background:#0a6cff;color:#fff;border-color:#0a6cff}
 #msg{color:#b00020}
 </style>
 </head><body>
-<h1>Aventus Wekker</h1>
+<h1>WaveSync</h1>
 <div class="card">
 <h2>Inloggen (prototype)</h2>
 <div class="row"><label>Gebruiker <input id="f_user" autocomplete="username"></label></div>

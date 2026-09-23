@@ -147,6 +147,23 @@ def _extract_labeled(description: str, labels: tuple[str, ...]) -> str:
             return waarde.strip()
     return ""
 
+def _extract_room_candidates(description: str) -> str:
+    """Zoek MyX-lokalen in ongelabelde DESCRIPTION-regels.
+
+    Sommige Xedule-feeds zetten het lokaal niet in ``LOCATION`` maar als een
+    losse regel, bijvoorbeeld ``LVM-E2.20 / E2.14 - LVM``. We nemen alleen
+    tokens met een duidelijk lokaalpatroon zodat klas-/groepscodes zoals
+    ``533LVM6A-1C`` niet als lokaal worden weergegeven.
+    """
+    found: list[str] = []
+    # Voorbeelden: LVM-E2.20, E2.14, B1.03, A0.12.
+    pattern = re.compile(r"\b(?:[A-Z]{2,6}-)?[A-Z]\d{1,2}(?:\.\d{1,3})+\b")
+    for line in description.splitlines():
+        for candidate in pattern.findall(line.upper()):
+            if candidate not in found:
+                found.append(candidate)
+    return " / ".join(found[:3])
+
 
 def parse_ics(text: str) -> list[Lesson]:
     """Vertaal een MyX iCalendar-response naar generieke Lesson-objecten."""
@@ -206,6 +223,8 @@ def parse_ics(text: str) -> list[Lesson]:
         location = _unescape_text(event.get("LOCATION", [({}, "")])[0][1])
         if not location:
             location = _extract_labeled(description, ("Lokaal", "Locatie", "Room"))
+        if not location:
+            location = _extract_room_candidates(description)
         teacher = _extract_labeled(description, ("Docent", "Teacher", "Begeleider"))
 
         try:
@@ -288,7 +307,7 @@ class MyXAgendaProvider:
             url = config.feed_url
             headers = {
                 "Accept": "text/calendar, text/plain;q=0.9, */*;q=0.1",
-                "User-Agent": "Aventus-Wekker/0.2",
+                "User-Agent": "WaveSync/0.3",
             }
         else:
             query = urllib.parse.urlencode(
@@ -302,7 +321,7 @@ class MyXAgendaProvider:
             headers = {
                 "Authorization": f"Bearer {config.bearer_token}",
                 "Accept": "text/calendar, text/plain;q=0.9, */*;q=0.1",
-                "User-Agent": "Aventus-Wekker/0.2",
+                "User-Agent": "WaveSync/0.3",
             }
 
         request = urllib.request.Request(url, headers=headers, method="GET")

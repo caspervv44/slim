@@ -1,8 +1,9 @@
-"""Veilige cloud-opslag voor niet-geheime wekkerinstellingen.
+"""Veilige cloud-opslag voor niet-geheime WaveSync-instellingen.
 
-De Raspberry Pi gebruikt een afzonderlijke device key voor de API. Het
-gebruikerswachtwoord wordt alleen gebruikt op de beheerwebsite en wordt nooit
-naar de Pi teruggestuurd nadat het daar is gewijzigd.
+De Raspberry Pi maakt lokaal een willekeurige device-ID, device key en
+startwachtwoord aan. Daardoor kan de QR-code meteen worden getoond, óók als
+de cloudserver tijdelijk niet bereikbaar is. De server ontvangt alleen de
+instellingen die geschikt zijn voor externe synchronisatie.
 
 MyX-feedlinks, Bearer-tokens en andere agenda-geheimen worden bewust NIET
 gesynchroniseerd.
@@ -14,12 +15,15 @@ import hashlib
 import json
 import logging
 import os
+import secrets
+import string
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from wekker.storage import JsonStore
@@ -28,8 +32,9 @@ log = logging.getLogger(__name__)
 
 DEFAULT_CLOUD_URL = "https://veendomain.nl/klok/test2.pl"
 SYNC_INTERVAL_SECONDS = 30
-HTTP_TIMEOUT_SECONDS = 8
+HTTP_TIMEOUT_SECONDS = 10
 MAX_RESPONSE_BYTES = 128 * 1024
+PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
 
 
 class CloudError(RuntimeError):
@@ -52,6 +57,10 @@ def _digest(data: dict[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _random_password(length: int = 16) -> str:
+    return "".join(secrets.choice(PASSWORD_ALPHABET) for _ in range(length))
+
+
 @dataclass(frozen=True)
 class CloudDisplayInfo:
     ready: bool = False
@@ -59,12 +68,16 @@ class CloudDisplayInfo:
     username: str = "basis"
     initial_password: str = ""
     password_changed: bool = False
-    status: str = "Cloudkoppeling voorbereiden…"
+    status: str = "Online beheer voorbereiden…"
     error: str = ""
 
 
 class CloudSettingsManager:
-    """Asynchrone synchronisatie zodat het touchscreen nooit op internet wacht."""
+    """Asynchrone synchronisatie zodat het touchscreen nooit op internet wacht.
+
+    Identiteit wordt lokaal aangemaakt voordat er netwerkverkeer plaatsvindt.
+    Zo blijft de QR-code beschikbaar wanneer de webserver tijdelijk offline is.
+    """
 
     def __init__(
         self,
@@ -80,8 +93,10 @@ class CloudSettingsManager:
         self._worker: threading.Thread | None = None
         self._pending: dict[str, Any] | None = None
         self._next_sync = 0.0
-        self._status = "Cloudkoppeling voorbereiden…"
+        self._status = "Online beheer voorbereiden…"
         self._error = ""
+        # Maak de identiteit meteen lokaal aan. Dit voert geen netwerkrequest uit.
+        self._ensure_local_identity()
 
     def _load_state(self) -> dict[str, Any]:
         try:
@@ -96,21 +111,83 @@ class CloudSettingsManager:
         except OSError:
             pass
 
-    def display_info(self) -> CloudDisplayInfo:
+    def _ensure_local_identity(self) -> dict[str, Any]:
+        """Maak cryptografisch willekeurige lokale login-gegevens aan.
+
+        De server hoeft dus niet bereikbaar te zijn om de QR/link te tonen.
+        """
         try:
             state = self._load_state()
+        except CloudError:
+            raise
+
+        # Bestaande installs uit de vorige versie hadden nog geen expliciete
+        # ``registered``-vlag. Een state met device-id/key en revisie >= 1 is
+        # al door de server uitgegeven en behandelen we daarom als geregistreerd.
+        had_server_identity = bool(
+            state.get("device_id")
+            and state.get("device_key")
+            and int(state.get("revision", 0) or 0) >= 1
+        )
+
+        changed = False
+        if not state.get("device_id"):
+            state["device_id"] = secrets.token_hex(32)
+            changed = True
+        if not state.get("device_key"):
+            state["device_key"] = secrets.token_hex(32)
+            changed = True
+        if not state.get("username"):
+            state["username"] = "basis"
+            changed = True
+        if not state.get("initial_password") and not state.get("password_changed"):
+            state["initial_password"] = _random_password(16)
+            changed = True
+        if not state.get("management_url"):
+            state["management_url"] = (
+                f"{self.base_url}?{urlencode({'d': state['device_id']})}"
+            )
+            changed = True
+        if "registered" not in state:
+            state["registered"] = had_server_identity
+            changed = True
+        state.setdefault("revision", 0)
+        state.setdefault("last_synced_hash", "")
+        state.setdefault("password_changed", False)
+        if changed:
+            self._save_state(state)
+        return state
+
+    def display_info(self) -> CloudDisplayInfo:
+        try:
+            state = self._ensure_local_identity()
         except CloudError as exc:
-            return CloudDisplayInfo(status="Cloudkoppeling niet beschikbaar", error=str(exc))
-        ready = bool(state.get("device_id") and state.get("device_key"))
+            return CloudDisplayInfo(
+                status="Online beheer niet beschikbaar",
+                error=str(exc),
+            )
+
+        local_ready = bool(
+            state.get("device_id")
+            and state.get("device_key")
+            and state.get("management_url")
+        )
         with self._lock:
             status, error = self._status, self._error
+
+        if not state.get("registered"):
+            if error:
+                status = "Cloud tijdelijk niet bereikbaar · QR blijft bruikbaar"
+            else:
+                status = "Online account wordt gekoppeld…"
+
         return CloudDisplayInfo(
-            ready=ready,
+            ready=local_ready,
             management_url=str(state.get("management_url", "")),
             username=str(state.get("username", "basis")),
             initial_password=str(state.get("initial_password", "")),
             password_changed=bool(state.get("password_changed", False)),
-            status=status if ready or error else "Cloudkoppeling voorbereiden…",
+            status=status,
             error=error,
         )
 
@@ -126,10 +203,15 @@ class CloudSettingsManager:
             self._worker = threading.Thread(
                 target=self._sync_worker,
                 args=(snapshot,),
-                name="wekker-cloud-sync",
+                name="wavesync-cloud-sync",
                 daemon=True,
             )
             self._worker.start()
+
+    def retry_soon(self) -> None:
+        """Laat de volgende GUI-tick direct opnieuw proberen."""
+        with self._lock:
+            self._next_sync = 0.0
 
     def consume_remote_patch(self) -> dict[str, Any] | None:
         with self._lock:
@@ -152,11 +234,12 @@ class CloudSettingsManager:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "AventusWekker/0.2",
+            "User-Agent": "WaveSync/0.3",
         }
-        if state and state.get("device_id") and state.get("device_key"):
+        if state and state.get("device_id") and state.get("device_key") and action != "register":
             headers["X-Wekker-Device"] = str(state["device_id"])
             headers["X-Wekker-Key"] = str(state["device_key"])
+
         req = Request(self.base_url, data=body, headers=headers, method="POST")
         try:
             with urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as resp:
@@ -171,34 +254,40 @@ class CloudSettingsManager:
             except Exception:
                 message = f"HTTP {exc.code}"
             raise CloudError(message) from exc
-        except (URLError, OSError) as exc:
-            raise CloudError(f"cloud niet bereikbaar: {exc}") from exc
+        except (URLError, OSError, TimeoutError) as exc:
+            reason = getattr(exc, "reason", exc)
+            raise CloudError(f"cloud niet bereikbaar: {reason}") from exc
 
         try:
             data = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise CloudError("cloud gaf geen geldige JSON terug") from exc
+            snippet = raw[:120].decode("utf-8", "replace").replace("\n", " ")
+            raise CloudError(f"cloud gaf geen geldige JSON terug: {snippet}") from exc
         if not isinstance(data, dict) or not data.get("ok"):
             raise CloudError(str(data.get("error", "onbekende cloudfout")))
         return data
 
     def _sync_worker(self, local: dict[str, Any]) -> None:
         try:
-            state = self._load_state()
-            if not state.get("device_id") or not state.get("device_key"):
-                reply = self._json_request("register", {"settings": local})
-                state = {
-                    "device_id": reply["device_id"],
-                    "device_key": reply["device_key"],
-                    "management_url": reply["management_url"],
-                    "username": reply.get("username", "basis"),
-                    # Alleen het eenmalige startwachtwoord staat lokaal zodat
-                    # het op het fysieke scherm kan worden getoond.
-                    "initial_password": reply.get("initial_password", ""),
-                    "password_changed": False,
-                    "revision": int(reply.get("revision", 1)),
-                    "last_synced_hash": _digest(local),
-                }
+            state = self._ensure_local_identity()
+
+            if not state.get("registered"):
+                reply = self._json_request(
+                    "register",
+                    {
+                        "settings": local,
+                        "device_id": state["device_id"],
+                        "device_key": state["device_key"],
+                        "username": state["username"],
+                        "initial_password": state.get("initial_password", ""),
+                    },
+                )
+                state["registered"] = True
+                state["management_url"] = reply.get(
+                    "management_url", state["management_url"]
+                )
+                state["revision"] = int(reply.get("revision", 1))
+                state["last_synced_hash"] = _digest(local)
                 self._save_state(state)
                 with self._lock:
                     self._status = "Online beheer is klaar"
@@ -212,6 +301,10 @@ class CloudSettingsManager:
 
             revision = int(remote.get("revision", 0))
             state["password_changed"] = bool(remote.get("password_changed", False))
+            if state["password_changed"]:
+                # Na wijzigen op de website kan het oorspronkelijke wachtwoord
+                # niet meer worden teruggelezen; verberg het daarom lokaal.
+                state["initial_password"] = ""
             local_hash = _digest(local)
             last_hash = str(state.get("last_synced_hash", ""))
             local_revision = int(state.get("revision", 0))

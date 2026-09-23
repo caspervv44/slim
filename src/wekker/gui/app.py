@@ -40,9 +40,12 @@ SUCCESS = "#55d6a3"
 
 TIMEZONE_CHOICES = (
     ("Europe/Amsterdam", "Amsterdam · CET/CEST"),
+    ("Europe/Brussels", "Brussel · CET/CEST"),
+    ("Europe/Berlin", "Berlijn · CET/CEST"),
     ("Europe/Paris", "Parijs · CET/CEST"),
     ("Europe/London", "Londen · GMT/BST"),
-    ("Europe/Berlin", "Berlijn · CET/CEST"),
+    ("Europe/Madrid", "Madrid · CET/CEST"),
+    ("Europe/Rome", "Rome · CET/CEST"),
     ("UTC", "UTC"),
 )
 
@@ -110,7 +113,7 @@ class TouchApp:
         self._running = True
         self._agenda_day: date | None = None
 
-        root.title("Aventus Wekker")
+        root.title("WaveSync")
         try:
             root.geometry(f"{SCREEN_WIDTH}x{SCREEN_HEIGHT}")
         except Exception:
@@ -196,7 +199,7 @@ class TouchApp:
     # Hoofdscherm
     def _build_main(self, layout: dict) -> None:
         tk = self._tk()
-        self._top_title("Aventus Wekker", "klaar voor je schooldag")
+        self._top_title("WaveSync")
 
         body = tk.Frame(self._frame, bg=BG)
         body.pack(fill="both", expand=True, padx=28)
@@ -303,17 +306,19 @@ class TouchApp:
 
             meta_parts = []
             if row.get("teacher"):
-                meta_parts.append(row["teacher"])
+                meta_parts.append(f'Docent: {row["teacher"]}')
+            if row.get("room"):
+                meta_parts.append(f'Lokaal: {row["room"]}')
             meta = tk.Label(
-                info, text=" · ".join(meta_parts), font=("DejaVu Sans", 10),
+                info, text="   ·   ".join(meta_parts), font=("DejaVu Sans", 10),
                 fg=MUTED, bg=CARD_ALT, anchor="w",
             )
             meta.pack(fill="x")
 
             room = tk.Label(
-                card, text=row.get("room") or "—",
-                font=("DejaVu Sans", 12, "bold"), fg=TEXT, bg=CARD,
-                padx=10, pady=5,
+                card, text=(f'LOKAAL\n{row["room"]}' if row.get("room") else "LOKAAL\n—"),
+                font=("DejaVu Sans", 10, "bold"), fg=TEXT, bg=CARD,
+                padx=10, pady=5, justify="center",
             )
             room.pack(side="right", padx=10)
 
@@ -345,8 +350,16 @@ class TouchApp:
         for widgets, row in zip(rows, layout["rows"]):
             self._set_text(widgets["time"], f'{row["start"]} – {row["end"]}')
             self._set_text(widgets["subject"], row["subject"])
-            self._set_text(widgets["meta"], row.get("teacher", ""))
-            self._set_text(widgets["room"], row.get("room") or "—")
+            meta_parts = []
+            if row.get("teacher"):
+                meta_parts.append(f'Docent: {row["teacher"]}')
+            if row.get("room"):
+                meta_parts.append(f'Lokaal: {row["room"]}')
+            self._set_text(widgets["meta"], "   ·   ".join(meta_parts))
+            self._set_text(
+                widgets["room"],
+                f'LOKAAL\n{row["room"]}' if row.get("room") else "LOKAAL\n—",
+            )
 
     def _shift_agenda_day(self, days: int) -> None:
         base = self._agenda_day or self._runtime.ctx.clock.now().date()
@@ -361,75 +374,101 @@ class TouchApp:
     # Instellingen
     def _build_settings(self, layout: dict) -> None:
         tk = self._tk()
-        self._top_title("Instellingen", "lokale klok & online beheer")
+        self._top_title("Instellingen")
 
         body = tk.Frame(self._frame, bg=BG)
         body.pack(fill="both", expand=True, padx=24, pady=(4, 0))
 
-        left = tk.Frame(body, bg=BG, width=300)
-        left.pack(side="left", fill="both", padx=(0, 7))
+        left = tk.Frame(body, bg=BG, width=310)
+        left.pack(side="left", fill="both", padx=(0, 8))
         left.pack_propagate(False)
 
+        # Tijdzone als echte dropdown. Dit is sneller en duidelijker dan
+        # stap voor stap door zones bladeren.
         zone_card = tk.Frame(left, bg=CARD)
-        zone_card.pack(fill="x", pady=(0, 7))
-        zone_text = tk.Frame(zone_card, bg=CARD)
-        zone_text.pack(fill="x", padx=14, pady=(10, 5))
+        zone_card.pack(fill="x", pady=(0, 8))
         tk.Label(
-            zone_text, text="Tijdzone", font=("DejaVu Sans", 14, "bold"),
+            zone_card, text="Tijdzone", font=("DejaVu Sans", 14, "bold"),
             fg=TEXT, bg=CARD, anchor="w",
-        ).pack(fill="x")
-        zone_label = tk.Label(
-            zone_text, text=self._timezone_label(layout["timezone"]),
-            font=("DejaVu Sans", 10), fg=MUTED, bg=CARD, anchor="w",
-        )
-        zone_label.pack(fill="x", pady=(2, 0))
-        self._widgets["timezone"] = zone_label
+        ).pack(fill="x", padx=14, pady=(11, 3))
+        tk.Label(
+            zone_card, text="Kies de regio voor datum, tijd en zomertijd.",
+            font=("DejaVu Sans", 9), fg=MUTED, bg=CARD, anchor="w",
+        ).pack(fill="x", padx=14, pady=(0, 6))
 
-        zone_buttons = tk.Frame(zone_card, bg=CARD)
-        zone_buttons.pack(fill="x", padx=12, pady=(0, 9))
-        for label, direction in (("‹", -1), ("›", 1)):
-            tk.Button(
-                zone_buttons, text=label, font=("DejaVu Sans", 17, "bold"),
-                fg=TEXT, bg=CARD_ALT, activebackground=ACCENT_DARK,
-                activeforeground=TEXT, bd=0,
-                command=lambda d=direction: self._cycle_timezone(d),
-            ).pack(side="left", expand=True, fill="x", padx=2)
+        zone_labels = [label for _value, label in TIMEZONE_CHOICES]
+        self._zone_by_label = {label: value for value, label in TIMEZONE_CHOICES}
+        zone_var = tk.StringVar(value=self._timezone_label(layout["timezone"]))
+        zone_menu = tk.OptionMenu(
+            zone_card, zone_var, *zone_labels,
+            command=self._select_timezone,
+        )
+        zone_menu.config(
+            font=("DejaVu Sans", 11, "bold"),
+            fg=TEXT, bg=CARD_ALT, activebackground=ACCENT_DARK,
+            activeforeground=TEXT, bd=0, highlightthickness=0,
+            anchor="w", padx=8, pady=7,
+        )
+        try:
+            zone_menu["menu"].config(
+                font=("DejaVu Sans", 10), fg=TEXT, bg=CARD_ALT,
+                activebackground=ACCENT_DARK, activeforeground=TEXT,
+            )
+        except Exception:
+            pass
+        zone_menu.pack(fill="x", padx=12, pady=(0, 11))
+        self._widgets["timezone_var"] = zone_var
+        self._widgets["timezone_menu"] = zone_menu
 
         fmt_card = tk.Frame(left, bg=CARD)
-        fmt_card.pack(fill="x", pady=(0, 7))
+        fmt_card.pack(fill="x", pady=(0, 8))
         tk.Label(
             fmt_card, text="Tijdweergave", font=("DejaVu Sans", 14, "bold"),
             fg=TEXT, bg=CARD, anchor="w",
-        ).pack(fill="x", padx=14, pady=(10, 3))
+        ).pack(fill="x", padx=14, pady=(11, 3))
+        tk.Label(
+            fmt_card, text="Tik om te wisselen tussen 24-uurs en AM/PM.",
+            font=("DejaVu Sans", 9), fg=MUTED, bg=CARD, anchor="w",
+        ).pack(fill="x", padx=14)
         toggle = tk.Button(
             fmt_card, text=self._format_label(layout["time_format"]),
             font=("DejaVu Sans", 12, "bold"), fg=TEXT, bg=ACCENT_DARK,
             activebackground=ACCENT, activeforeground=TEXT,
-            bd=0, pady=7, command=self._toggle_time_format,
+            bd=0, pady=8, command=self._toggle_time_format,
         )
-        toggle.pack(fill="x", padx=12, pady=(2, 10))
+        toggle.pack(fill="x", padx=12, pady=(7, 11))
         self._widgets["time_format"] = toggle
 
         tk.Label(
-            left, text="Wijzigingen worden lokaal én online gesynchroniseerd.",
+            left,
+            text="MyX en roosterkoppeling beheer je via de lokale webapp.",
             font=("DejaVu Sans", 9), fg=MUTED, bg=BG,
-            wraplength=285, justify="left",
-        ).pack(anchor="w", pady=(2, 0))
+            wraplength=292, justify="left",
+        ).pack(anchor="w", pady=(3, 0))
 
         cloud_card = tk.Frame(body, bg=CARD)
-        cloud_card.pack(side="right", fill="both", expand=True, padx=(7, 0))
+        cloud_card.pack(side="right", fill="both", expand=True, padx=(8, 0))
         tk.Label(
             cloud_card, text="Online beheer", font=("DejaVu Sans", 15, "bold"),
             fg=TEXT, bg=CARD, anchor="w",
-        ).pack(fill="x", padx=14, pady=(9, 2))
+        ).pack(fill="x", padx=14, pady=(10, 2))
 
         status = tk.Label(
             cloud_card, text=layout.get("cloud_status", ""),
-            font=("DejaVu Sans", 9), fg=SUCCESS if layout.get("cloud_ready") else MUTED,
+            font=("DejaVu Sans", 9, "bold"),
+            fg=SUCCESS if layout.get("cloud_ready") else MUTED,
             bg=CARD, anchor="w",
         )
         status.pack(fill="x", padx=14)
         self._widgets["cloud_status"] = status
+
+        error = tk.Label(
+            cloud_card, text=layout.get("cloud_error", ""),
+            font=("DejaVu Sans", 8), fg="#f59e9e", bg=CARD,
+            anchor="w", justify="left", wraplength=430,
+        )
+        error.pack(fill="x", padx=14, pady=(1, 0))
+        self._widgets["cloud_error"] = error
 
         cloud_content = tk.Frame(cloud_card, bg=CARD)
         cloud_content.pack(fill="both", expand=True, padx=12, pady=(5, 8))
@@ -446,15 +485,15 @@ class TouchApp:
         details.pack(side="left", fill="both", expand=True)
 
         tk.Label(
-            details, text="Scan de QR-code of gebruik deze link:",
+            details, text="Scan de QR-code of gebruik de link:",
             font=("DejaVu Sans", 9, "bold"), fg=TEXT, bg=CARD, anchor="w",
         ).pack(fill="x")
         link = tk.Label(
-            details, text=layout.get("cloud_url") or "Wordt aangemaakt…",
+            details, text=layout.get("cloud_url") or "Wordt lokaal aangemaakt…",
             font=("DejaVu Sans", 8), fg=ACCENT, bg=CARD, anchor="w",
-            justify="left", wraplength=315,
+            justify="left", wraplength=305,
         )
-        link.pack(fill="x", pady=(2, 6))
+        link.pack(fill="x", pady=(2, 5))
         self._widgets["cloud_url"] = link
 
         user = tk.Label(
@@ -464,9 +503,8 @@ class TouchApp:
         user.pack(fill="x", pady=1)
         self._widgets["cloud_user"] = user
 
-        password_text = self._cloud_password_text(layout)
         password = tk.Label(
-            details, text=password_text,
+            details, text=self._cloud_password_text(layout),
             font=("DejaVu Sans Mono", 10, "bold"), fg=TEXT, bg=CARD,
             anchor="w", justify="left",
         )
@@ -475,22 +513,30 @@ class TouchApp:
 
         tk.Label(
             details,
-            text="Het startwachtwoord kun je op de beheerpagina wijzigen. "
-                 "MyX-tokens en feedlinks worden niet in de cloud opgeslagen.",
+            text="De QR en login worden lokaal gemaakt. Een storing op de server "
+                 "blokkeert de klok niet; WaveSync probeert automatisch opnieuw.",
             font=("DejaVu Sans", 8), fg=MUTED, bg=CARD,
-            anchor="w", justify="left", wraplength=315,
-        ).pack(fill="x", pady=(6, 0))
+            anchor="w", justify="left", wraplength=305,
+        ).pack(fill="x", pady=(5, 0))
 
         self._refresh_qr(layout)
         self._render_nav()
 
     def _update_settings(self, layout: dict) -> None:
-        self._set_text(self._widgets["timezone"], self._timezone_label(layout["timezone"]))
+        zone_var = self._widgets.get("timezone_var")
+        if zone_var is not None:
+            try:
+                wanted = self._timezone_label(layout["timezone"])
+                if zone_var.get() != wanted:
+                    zone_var.set(wanted)
+            except Exception:
+                pass
         self._set_text(self._widgets["time_format"], self._format_label(layout["time_format"]))
         self._set_text(self._widgets["cloud_status"], layout.get("cloud_status", ""))
+        self._set_text(self._widgets["cloud_error"], layout.get("cloud_error", ""))
         self._set_text(
             self._widgets["cloud_url"],
-            layout.get("cloud_url") or "Wordt aangemaakt…",
+            layout.get("cloud_url") or "Wordt lokaal aangemaakt…",
         )
         self._set_text(
             self._widgets["cloud_user"],
@@ -542,14 +588,10 @@ class TouchApp:
     def _format_label(value: str) -> str:
         return "24 uur · 20:41" if value == "24h" else "12 uur · 8:41 PM"
 
-    def _cycle_timezone(self, direction: int) -> None:
-        current = self._runtime.ctx.settings.locale.timezone
-        zones = [value for value, _label in TIMEZONE_CHOICES]
-        try:
-            index = zones.index(current)
-        except ValueError:
-            index = 0
-        self._save_locale(timezone=zones[(index + direction) % len(zones)])
+    def _select_timezone(self, label: str) -> None:
+        zone = getattr(self, "_zone_by_label", {}).get(label)
+        if zone:
+            self._save_locale(timezone=zone)
 
     def _toggle_time_format(self) -> None:
         current = self._runtime.ctx.settings.locale.time_format
