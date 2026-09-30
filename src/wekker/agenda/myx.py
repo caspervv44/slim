@@ -350,7 +350,7 @@ class MyXAgendaProvider:
             url = config.feed_url
             headers = {
                 "Accept": "text/calendar, text/plain;q=0.9, */*;q=0.1",
-                "User-Agent": "WaveSync/0.3",
+                "User-Agent": "WakeSync/0.3",
             }
         else:
             query = urllib.parse.urlencode(
@@ -364,7 +364,7 @@ class MyXAgendaProvider:
             headers = {
                 "Authorization": f"Bearer {config.bearer_token}",
                 "Accept": "text/calendar, text/plain;q=0.9, */*;q=0.1",
-                "User-Agent": "WaveSync/0.3",
+                "User-Agent": "WakeSync/0.3",
             }
 
         request = urllib.request.Request(url, headers=headers, method="GET")

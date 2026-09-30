@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+import time
 
 from wekker.agenda.cache import AgendaCache
 from wekker.agenda.providers import ProviderError
@@ -80,9 +81,14 @@ def test_shutdown_zet_lamp_uit(tmp_path):
 def test_maybe_auto_sync_periodiek(tmp_path):
     rt = build_default(tmp_path / "settings.json")
     assert rt.ctx.cache.status == "never"
-    assert maybe_auto_sync(rt) is True  # eerste keer altijd
+    assert maybe_auto_sync(rt) is True  # eerste keer altijd; v8 plant achtergrondwerk
+
+    deadline = time.monotonic() + 2
+    while rt.ctx.cache.status != "ok" and time.monotonic() < deadline:
+        time.sleep(0.01)
     assert rt.ctx.cache.status == "ok"
     assert maybe_auto_sync(rt) is False  # binnen interval: overslaan
+    shutdown(rt)
 
 
 def test_mislukte_auto_sync_retryt_niet_agressief():

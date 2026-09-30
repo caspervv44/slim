@@ -105,3 +105,15 @@ def test_display_theme_wordt_gevalideerd():
     assert DisplaySettings(theme="ocean").theme == "ocean"
     with pytest.raises(SettingsError):
         DisplaySettings(theme="neon-onbekend")
+
+
+def test_slaapmodus_wordt_gevalideerd():
+    from wekker.settings import DisplaySettings, SettingsError
+
+    assert DisplaySettings(sleep_after_seconds=60).sleep_after_seconds == 60
+    assert DisplaySettings(sleep_after_seconds=0).sleep_after_seconds == 0
+    assert DisplaySettings(sleep_view="logo_time").sleep_view == "logo_time"
+    with pytest.raises(SettingsError):
+        DisplaySettings(sleep_after_seconds=-1)
+    with pytest.raises(SettingsError):
+        DisplaySettings(sleep_view="onbekend")

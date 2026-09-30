@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 #: Bronlabels waarvan de gegevens altijd gesimuleerd zijn. Echte
-#: platformdata krijgt later de kale providernaam als source (bv. "osiris").
+#: platformdata krijgt de kale providernaam als source (bv. "myx").
 SIMULATED_SOURCES = frozenset({"mock", "osiris-demo"})
 
 
@@ -17,12 +17,10 @@ class Lesson:
     end: datetime
     teacher: str = ""
     room: str = ""
-    # Herkomst van de gegevens ("mock" = gesimuleerd; later per platform).
-    # De setup-app toont dit zodat nooit echte en nepgegevens verward worden.
     source: str = "mock"
 
     def to_dict(self) -> dict:
-        """Serialiseer voor de setup-API (gesimuleerd-badge via 'simulated')."""
+        """Serialiseer voor API en persistente cache."""
         return {
             "title": self.subject,
             "subject": self.subject,
@@ -33,6 +31,20 @@ class Lesson:
             "source": self.source,
             "simulated": self.source in SIMULATED_SOURCES,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Lesson":
+        """Herstel een les uit de persistente agenda-cache."""
+        if not isinstance(data, dict):
+            raise ValueError("lesrecord moet een object zijn")
+        return cls(
+            subject=str(data.get("subject") or data.get("title") or ""),
+            start=datetime.fromisoformat(str(data["start_time"])),
+            end=datetime.fromisoformat(str(data["end_time"])),
+            teacher=str(data.get("teacher") or ""),
+            room=str(data.get("location") or data.get("room") or ""),
+            source=str(data.get("source") or "mock"),
+        )
 
     def __post_init__(self) -> None:
         if not self.subject:
@@ -49,6 +61,24 @@ class Lesson:
 class DaySchedule:
     day: date
     lessons: list[Lesson]
+
+    def to_dict(self) -> dict:
+        return {
+            "day": self.day.isoformat(),
+            "lessons": [lesson.to_dict() for lesson in self.lessons],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "DaySchedule":
+        if not isinstance(data, dict):
+            raise ValueError("dagrooster moet een object zijn")
+        records = data.get("lessons", [])
+        if not isinstance(records, list):
+            raise ValueError("lessons moet een lijst zijn")
+        return cls(
+            day=date.fromisoformat(str(data["day"])),
+            lessons=[Lesson.from_dict(item) for item in records],
+        )
 
     def __post_init__(self) -> None:
         self.lessons = sorted(self.lessons, key=lambda les: les.start)

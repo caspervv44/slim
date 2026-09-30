@@ -1,125 +1,81 @@
-# Hardware-integratieplan — laptop-simulatie → Raspberry Pi 5
+# Hardware-integratieplan — WakeSync v8
 
-Eerste prototype: **display + speaker + lamp + één button + Raspberry Pi 5**.
-Bewegingshardware is uitgesteld naar een latere prototypefase en maakt geen
-deel uit van de eerste werkende versie.
+## Bevestigde prototypehardware
 
-Uitgangspunt: de architectuur blijft staan. De core kent alleen Protocols;
-`wekker.hardware.mock` blijft bestaan voor laptop en regressietests; echte
-drivers komen in een nieuwe module `wekker.hardware.raspberry` met dezelfde
-methodenamen. **Er wordt in dit document geen enkele definitieve pin
-vastgelegd** — de pinout-tabel hieronder is leeg en wordt pas ingevuld als de
-onderdelen bekend zijn (zie `docs/hardware-inventory.md`).
+De software is nu afgestemd op de onderdelen die daadwerkelijk van het huidige
+prototype bekend zijn:
 
-## 1. Beoordeling bestaande interfaces (`hardware/interfaces.py`)
+- Raspberry Pi 5;
+- Raspberry Pi OS met Wayland/labwc;
+- Waveshare 5-inch HDMI LCD, 800×480;
+- touchdevice `ADS7846 Touchscreen`;
+- actieve Wayland-output op het geteste apparaat: `HDMI-A-1`.
 
-| Interface | Methode | Geschikt voor echte hardware? | Opmerking / contract |
-|---|---|---|---|
-| DisplayDriver | `show(lines)` | ✅ ja, mits | Driver moet **graceful omgaan met willekeurige regelaantallen** (tronceren/scrollen naar paneelgrootte). Paneelafmetingen horen in de driver, niet in de manager. |
-| DisplayDriver | `clear()` | ✅ ja | — |
-| DisplayDriver | `set_brightness(0..100)` | ✅ ja | Driver vertaalt naar paneelbereik; buiten bereik → `ValueError` (zoals de mock). |
-| Speaker | `play(sound, volume)` | ✅ ja, mits | `sound` is nu een naam (`"beep"`); echte driver mapt namen op geluidsbestanden/apparaat. Volume-ramp (`ramp_up_seconds`) is gereserveerd en wordt pas met echte hardware gevalideerd. |
-| Speaker | `stop()` / `is_playing` | ✅ ja | `stop()` moet altijd veilig zijn, ook als er niets speelt. |
-| Lamp | `on(brightness, blink, pattern)` | ✅ ja | `pattern` ∈ {steady, blink, pulse}; driver implementeert via (hardware-)PWM of relais. Fysieke betekenis van patronen kalibreren op het apparaat. |
-| Lamp | `off()` / `is_on` | ✅ ja | — |
-| Button | `on_press(handler)` | ✅ ja | Echte driver registreert GPIO-events; software-debounce zit in `ButtonController` (0,3 s), dus prellen is geen driver-eis. Handler loopt op een eigen thread (core is RLock-beveiligd). |
-| TouchSensor | `on_touch(handler)` | ⏸️ uitgesteld | Protocol bewaard voor later; geen onderdeel van dit prototype. |
-| MotorController | `drive_to(target)` / `stop()` / `is_driving` | ⏸️ uitgesteld | Bewegingshardware is uitgesteld naar een latere prototypefase en maakt geen deel uit van de eerste werkende versie. |
+Op het huidige scherm is `/sys/class/backlight` leeg en de monitor meldt geen
+DDC/CI-ondersteuning. De donkere WakeSync-slaapweergave is daarom **geen**
+garantie dat de fysieke backlight uit of gedimd is.
 
-**Conclusie:** de interfaces zijn voldoende voor de eerste integratie. Er is
-**geen interface-wijziging nodig**; wel gelden de hardwarecontracten uit de
-module-docstring (idempotentie, fouten doorgooien i.p.v. slikken) onverkort
-voor elke echte driver. De laptop-simulatie (`python -m wekker simulate`)
-blijft de regressietest voor alle software boven de driverlaag.
+## Touch/displayprofiel
 
-## 2. Driverplan per onderdeel (aanpak, geen pinnen)
+WakeSync v8 bevat het profiel:
 
-| Onderdeel | Waarschijnlijke aanpak | Definitief te kiezen zodra bekend |
-|---|---|---|
-| Eén button (boven op speaker) | gpiozero `Button` (pull-up/down); debounce in `ButtonController` | Pinnummer, pull-richting |
-| Lamp | GPIO via transistor/relais; dimmen/knipperen via hardware-PWM waar mogelijk (gpiozero `PWMLED`), anders software-PWM | Stroomopname, PWM-geschiktheid |
-| Speaker | Afhankelijk van type: `aplay`/pygame voor bestanden, gpiozero-tones voor zoemer; `play`/`stop` als dunne wrapper | Speakertype |
-| LED-display | **Volledig paneel-afhankelijk** (I2C/SPI/HAT-bibliotheek van fabrikant); eigen klasse met `show`/`clear`/`set_brightness`, troncering naar paneelgrootte | Paneeltype + interface + logica-niveau |
-| Klok | `SystemClock` blijft voldoen; op de Pi NTP controleren (`timedatectl`) en bij stroomuitval een RTC/HAT overwegen | NTP-status op apparaat |
+```text
+waveshare-5-hdmi-ads7846
+```
 
-Integratievolgorde in code (pas als hardware er is): één driver per keer in
-`wekker/hardware/raspberry.py` met fabrieksfunctie, `--hardware pi|mock`-vlag
-in `main.build_default()`, en per driver eerst het bijbehorende fase-testje
-uit §3 groen voordat de core ermee verbonden wordt.
+Als Linux ADS7846 al detecteert, corrigeert WakeSync alleen de labwc-mapping en
+laat bootconfig ongemoeid. De beoogde mapping is:
 
-## 3. Pinout (leeg — pas invullen bij bekende hardware)
+```xml
+<touch deviceName="ADS7846 Touchscreen"
+       mapToOutput="HDMI-A-1"
+       mouseEmulation="yes" />
+```
 
-| Functie | GPIO (BCM) | Fysieke pin | Interface | Opmerking |
-|---|---|---|---|---|
-| Button | ❓ | ❓ | GPIO in | pull-richting noteren; debounce in software |
-| Lamp | ❓ | ❓ | ❓ (PWM?) | via driver, nooit direct |
-| Display | ❓ | ❓ | ❓ (I2C/SPI/HAT) | adres/bus noteren |
-| Speaker | ❓ | ❓ | ❓ | type noteren |
-| Voeding lamp | — | — | eigen voeding bij >20 mA | GND gemeenschappelijk |
+Voor een schone installatie waar de driver niet wordt gedetecteerd, mag de
+profielspecifieke bootconfig alleen na expliciete bevestiging worden gebruikt.
+Voor iedere wijziging wordt een backup gemaakt; een tweede uitvoering hoort
+geen nieuwe wijziging te veroorzaken.
 
-Regel: pinnen pas invullen na `gpioinfo`-controle op vrije lijnen.
+## Hardware die nog niet definitief is
 
-## 4. Benodigde libraries (geverifieerd voor Pi 5, september 2026)
+De productpresentatie kan toekomstige lamp/geluidsfuncties beschrijven, maar
+v8 claimt nog geen werkende fysieke driver voor:
 
-| Library | Bron | Waarvoor | Status Pi 5 |
-|---|---|---|---|
-| `gpiozero` (2.x) | apt `python3-gpiozero` (vooruit geïnstalleerd op Pi OS) of pip | Button-events, lamp-PWM; kiest zelf de lgpio-backend | ✅ aanbevolen |
-| `lgpio` | apt of pip (`python3-dev`, `swig`, `liblgpio-dev` nodig bij pip-build) | Directe GPIO-toegang als gpiozero tekortschiet; gpiochip van de header op de Pi 5 is **niet** chip 0 | ✅ |
-| `rpi-lgpio` | pip | Alleen opvang voor bestaande oude RPi.GPIO-code; **niet** voor dit project | n.v.t. |
-| `RPi.GPIO` / `pigpio` | — | **Niet gebruiken op de Pi 5** (RP1-chip; registers onbereikbaar) | ❌ |
-| Display/speaker | fabrikant-specifiek | Pas te kiezen bij bekend paneel-/speakertype | ❓ |
+- speaker of buzzer;
+- flits-/wake-uplamp;
+- fysieke alarmknop/aansluitpin.
 
-Onze runtime blijft stdlib-only; gpiozero/lgpio komen er pas bij als
-optionele Pi-dependency zodra de eerste echte driver geschreven wordt.
+Pinnen worden pas vastgelegd nadat de werkelijke onderdelen en elektrische
+aansluiting zijn gecontroleerd.
 
-## 5. Testplan eerste aansluiting (volgorde is verplicht)
+## Softwarecontracten voor latere drivers
 
-**Fase 0 — Pi-basis.** OS- en Python-versie noteren; `pinout`, `gpioinfo`,
-`timedatectl` (NTP-sync!); `python3-gpiozero` aanwezig; venv + project
-installeren; `pytest -q` op de Pi groen (software-regressie op het apparaat).
+`wekker.hardware.interfaces` blijft de scheiding tussen alarmcore en hardware.
+Een echte driver moet dezelfde semantiek als de mocks volgen:
 
-**Fase 1 — Display alleen.** Fabrikant-voorbeeldscript draaien; daarna
-`show`/`clear`/`set_brightness`-equivalent testen incl. lange regellijst
-(troncatie!) en helderheid 0/100. Acceptatie: leesbaar op armlengte, ook gedimd.
+- `Speaker.play(...)` / `stop()` mogen fouten niet stil inslikken;
+- `Lamp.on(...)` / `off()` moeten een veilige uittoestand ondersteunen;
+- de fysieke stopknop levert precies één gevalideerde actie per druk;
+- de alarmcore commit zijn toestand pas nadat de bijbehorende hardwareactie
+  succesvol is afgerond.
 
-**Fase 2 — Speaker alleen.** Stilste volume eerst, opbouwen; `stop()` tijdens
-afspelen; acceptatie: hoorbaar uit bed, `is_playing` klopt.
+Daardoor kan een eenmalige driverfout worden herprobeerd zonder half
+gecommitte snooze- of dismissstatus.
 
-**Fase 3 — Lamp alleen.** Eerst meting/indicatie dat de schakeling klopt,
-dan kort aan op lage helderheid; patronen steady/blink/pulse beoordelen;
-acceptatie: fel maar veilig, `off()` werkt altijd.
+## Aansluit- en testvolgorde voor toekomstige hardware
 
-**Fase 4 — Button alleen.** 20x drukken, vals-positieven tellen; acceptatie:
-elke druk precies één actie (debounce!), geen spook-events. Daarna button
-tegen actief alarm testen (afhandeling + lamp uit).
+1. **Pi en scherm** — touch/output/NTP en v8-healthcheck controleren.
+2. **Speaker alleen** — laag volume, play/stop en foutgedrag testen.
+3. **Lamp alleen** — elektrische driver en default-uit veilig controleren.
+4. **Fysieke knop alleen** — debounce en 20 opeenvolgende drukken testen.
+5. **Integratie** — complete `SLEEPING → RINGING → SNOOZED/DISMISSED`-cyclus.
 
-**Fase 5 — Integratie met de core.** Eén driver tegelijk via `--hardware`-vlag;
-eerst `python -m wekker simulate --demo` als software-regressie, daarna echte
-alarmcyclus; acceptatie: zelfde toestandsverloop als de simulatie
-(`SLEEPING → RINGING → DISMISSED` via de button).
+Gebruik voor GPIO op een Pi 5 bij voorkeur een actuele gpiozero/lgpio-route en
+gok nooit pinnen of spanningsniveaus. Een lamp met relevante stroom hoort via
+een geschikte driver/transistor/relais en niet rechtstreeks aan een GPIO-pin.
 
-## 6. Veiligheidsmaatregelen
+## Niet in v8
 
-1. Lamp bij >20 mA op **eigen voeding** met passende driver (transistor/relais);
-   nooit direct op een GPIO-pin; GND gemeenschappelijk met de Pi.
-2. Power-on-gedrag vastleggen: bij boot moeten lamp (en later: motoren) **uit**
-   blijven; verifiëren vóór integratie.
-3. Software detecteert fouten (drivers gooien door, lus + core blijven
-   consistent — al getest met mocks), maar software is **geen** vervanging
-   voor 1–2.
-4. 3,3V-logica respecteren: geen 5V-signalen op GPIO; bij twijfel level-shifter.
-5. `shutdown()` dooft de lamp altijd (al in code + getest); bij stroomuitval
-   helpt alleen hardware-matiging (schakeling default-uit).
-
-## 7. Wat code-matig nog moet gebeuren (later, niet nu)
-
-- Onderdelen fysiek controleren en `docs/hardware-inventory.md` aanvullen.
-- `wekker/hardware/raspberry.py` met één driver per onderdeel (display,
-  speaker, lamp, button) + fabrieksfunctie.
-- `--hardware pi|mock`-vlag in `main.build_default()` (mocks blijven default).
-- Display-regelbreedte en lamphelderheid afstemmen zodra de hardware bekend is.
-- Pas daarna: agenda-adapters, Wi-Fi-setup, productie-authenticatie/TLS voor de setup-API (prototype-login casper/casper bestaat al, alleen voor lokaal gebruik).
-
-**Niet doen:** pinnen gokken, display-/speakerd driver schrijven zonder
-onderdeeltype, hardware "werkend" noemen zonder fase-test, simulatie
-verwijderen, core herschrijven.
+V8 flasht geen kernel, volledig Raspberry Pi OS of EEPROM/bootloader. Ook
+beweging/motoren maken geen deel uit van het huidige productplan.

@@ -1,85 +1,85 @@
 # MyX / Xedule koppelen
 
-De voorkeursmethode is nu de **MyX InternetCalendar Feed**. De configuratie
-gebeurt via de webinterface van de wekker (`http://<pi-ip>:8080/`), niet via
-een instellingenmenu op het ingebouwde touchscreen.
+De voorkeursmethode is de **MyX InternetCalendar Feed**. In WakeSync v8 gebeurt
+de normale configuratie via de persoonlijke beheerpagina op
+`https://veendomain.nl/klok/test2.pl`; de oude lokale webapp op poort 8080 is
+geen onderdeel van de productstart.
 
-## Waarom de Feed beter is
+## Feed uit MyX
 
-MyX heeft in **Mijn rooster → ⋮ → Feed** een agenda-abonnement. Uit de
-aangeleverde MyX-frontend blijkt dat MyX hiervoor een URL maakt met dit patroon:
+MyX kan via **Mijn rooster → ⋮ → Feed** een agenda-abonnement aanbieden met
+dit patroon:
 
 ```text
 webcal://aventus.myx.nl/api/InternetCalendar/feed/<user-uuid>/<feed-uuid>
 ```
 
-De wekker normaliseert `webcal://` lokaal naar `https://` en haalt de ICS-feed
-periodiek op. Er staat **geen datum in de URL**: dezelfde feedlink wordt dus
-steeds opnieuw gebruikt en MyX levert de actuele agenda-inhoud.
+WakeSync valideert uitsluitend het officiële `aventus.myx.nl`-feedpad,
+normaliseert `webcal://` lokaal naar `https://` en haalt de ICS-feed periodiek
+op. Dezelfde feedlink kan de actuele agenda blijven leveren; er staat geen
+specifieke kalenderdatum in de URL.
 
-De `blob:https://aventus.myx.nl/<uuid>`-links die een browser bij handmatig
-downloaden toont zijn iets anders. Een blob-URL is browserlokale tijdelijke
-opslag. De UUID kan bij elke download veranderen en is na sluiten/verversen
-niet bedoeld als permanente agenda-URL. De wekker accepteert blob-links daarom
-bewust niet.
+Een `blob:https://...`-URL uit een browserdownload is geen bruikbare permanente
+feed en wordt geweigerd.
 
-## Koppelen via de webinterface
+## Koppelen via veendomain.nl
 
-1. Start de wekker/API op het lokale netwerk.
-2. Open `http://<ip-van-de-pi>:8080/`.
-3. Log in op de setup-pagina.
-4. Open MyX in een normale browser en ga naar **Mijn rooster**.
-5. Kies naast **Mijn rooster** de drie puntjes en daarna **Feed**.
-6. Kopieer de `webcal://.../api/InternetCalendar/feed/.../...` link.
-7. Plak de link in **MyX / Xedule → Feed koppelen**.
-8. De wekker valideert uitsluitend `aventus.myx.nl`, bewaart de link lokaal en
-   probeert direct een rooster-sync.
+1. Open de persoonlijke WakeSync-beheerpagina via de QR-code op het apparaat.
+2. Log in met de persoonlijke WakeSync-inloggegevens.
+3. Open MyX in een normale browser en ga naar **Mijn rooster**.
+4. Kies de drie puntjes en daarna **Feed**.
+5. Kopieer de `webcal://.../api/InternetCalendar/feed/.../...`-link.
+6. Plak deze in de MyX/iCalendar-instelling en sla op.
+7. `test2.pl` bewaart de nieuwe feed tijdelijk voor dat specifieke apparaat.
+8. De Raspberry Pi haalt de feedconfiguratie op via zijn device-authenticatie,
+   valideert en bewaart de feed lokaal.
+9. Na succesvolle lokale opslag stuurt de Pi een ontvangstbevestiging
+   (**ACK**) naar `test2.pl`; daarna wordt de tijdelijke feed-URL op de server
+   verwijderd.
 
-De feedlink is een capability/abonnementslink: behandel hem als geheim. De
-webinterface toont de opgeslagen link daarom niet terug.
+De feedlink functioneert als een geheim abonnementstoken en wordt daarom niet
+als gewone cloudsetting teruggetoond.
 
 ## Lokale opslag
 
-De feed staat in:
+De feed wordt lokaal opgeslagen onder de applicatiedatamap, standaard:
 
 ```text
 ~/.local/share/aventus-wekker/myx-feed.json
 ```
 
-Op Linux krijgt dit bestand modus `0600`. **MyX-koppeling verwijderen** wist
-de feed, de eventuele oude Bearer-token en het speciale Chromium-profiel.
+De bestaande mapnaam blijft voorlopig behouden voor compatibiliteit met
+bestaande installaties. Op Linux probeert WakeSync beperkte rechten (`0600`)
+op het feedbestand te gebruiken.
 
-## Fallback: browser-SSO op het Pi-scherm
+## Synchronisatie en offline gebruik
 
-Als de Feed-link niet gekopieerd kan worden, blijft de eerdere browser-SSO als
-fallback bestaan. Start die vanuit de **webinterface** via
-**Alternatief: eenmalig inloggen op het Pi-scherm**. Chromium opent dan op de
-Pi, de student logt in via de officiële Aventus/MyX-pagina en de wekker leest
-het tijdelijke access-token lokaal uit de browserflow.
+Agenda-HTTP draait in v8 buiten de alarm-/GUI-thread. Een trage of geblokkeerde
+MyX-request mag dus niet voorkomen dat de klok/touch reageert of een alarm
+wordt getriggerd.
 
-Een Bearer-token is tijdelijk en wordt nooit kunstmatig permanent gemaakt.
-Een blijvend Chromium-profiel kan een bestaande SSO-sessie soms gebruiken om
-een nieuw token te verkrijgen. Zodra de school opnieuw inloggen vereist, moet
-de student opnieuw authenticeren.
+De lokale agendacache houdt afzonderlijk bij:
 
-## Synchronisatie
+- laatste synchronisatiepoging;
+- laatste geslaagde synchronisatie;
+- welke dagen aantoonbaar zijn geladen;
+- de laatste foutstatus.
 
-De Feed-koppeling heeft voorrang op een oude Bearer-token. De wekker haalt
-standaard 21 dagen vooruit uit de feed, filtert de ICS lokaal en behoudt de
-bestaande cache wanneer MyX of het netwerk tijdelijk niet bereikbaar is.
-
-De oude environment-variabelen blijven alleen als development-fallback bestaan:
-
-```bash
-export WEKKER_MYX_BEARER_TOKEN='...'
-export WEKKER_MYX_ATT_ID='...'
-```
+Een mislukte netwerkpoging maakt oude data niet kunstmatig 'vers'. Bij een
+offline herstart blijft de laatst bekende agenda beschikbaar.
 
 ## Beveiliging
 
-- schoolwachtwoorden worden niet door de wekker opgeslagen;
-- Feed-URLs en tokens worden niet in gewone instellingen of logs geschreven;
-- alleen `https://aventus.myx.nl/api/InternetCalendar/feed/<uuid>/<uuid>` wordt
-  als Feed geaccepteerd;
-- `blob:`-, HTTP- en vreemde domeinlinks worden geweigerd;
-- ontkoppelen verwijdert lokale MyX-authenticatiegegevens.
+- schoolwachtwoorden worden niet door WakeSync opgeslagen;
+- feed-URLs en tokens horen niet in gewone instellingen of diagnose-export;
+- alleen de bekende MyX-feedstructuur op `aventus.myx.nl` wordt geaccepteerd;
+- `blob:`-, gewone HTTP- en vreemde domeinlinks worden geweigerd;
+- cloudtransport gebruikt het apparaatkanaal; een feed wordt pas op de server
+  verwijderd nadat de Pi de lokale ontvangst heeft bevestigd.
+
+## Browser-SSO fallback
+
+De oudere Chromium/SSO-code blijft voor compatibiliteit en ontwikkeling
+aanwezig, maar is niet de aanbevolen normale productflow. De iCalendar-feed via
+de persoonlijke beheerpagina is eenvoudiger en vereist geen blijvende lokale
+webapp.

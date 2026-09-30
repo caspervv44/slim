@@ -1,4 +1,4 @@
-"""Synchronisatieservice: provider -> cache, met nette foutafhandeling."""
+"""Synchronisatieservice: provider -> persistente cache, met nette foutafhandeling."""
 
 from __future__ import annotations
 
@@ -27,43 +27,44 @@ class AgendaSyncService:
         self._cache.mark_error(self._clock.now(), message)
 
     def sync_day(self, day: date) -> bool:
-        """Synchroniseer één dag. Geeft True bij succes, False bij fout."""
+        """Synchroniseer één dag.
+
+        ``last_attempt`` wordt vóór de request gezet. Alleen succes verandert
+        ``last_success``. Daardoor kan de UI eerlijk oude roosterdata tonen.
+        """
+        self._cache.mark_attempt(self._clock.now())
         try:
-            lessen = self._provider.fetch_day(day)
+            lessons = self._provider.fetch_day(day)
         except ProviderError as exc:
             log.warning("agenda-sync mislukt voor %s: %s", day.isoformat(), exc)
             self._mark_error(str(exc))
             return False
-        except Exception as exc:  # onverwachte adapterfout: cache behouden
+        except Exception as exc:
             log.exception("onverwachte agenda-fout voor %s", day.isoformat())
             self._mark_error(f"{type(exc).__name__}: {exc}")
             return False
 
-        self._cache.put_day(day, lessen)
+        self._cache.put_day(day, lessons)
         self._cache.mark_ok(self._clock.now())
-        log.info("agenda-sync ok voor %s (%d lessen)", day.isoformat(), len(lessen))
+        log.info("agenda-sync ok voor %s (%d lessen)", day.isoformat(), len(lessons))
         return True
 
     def sync_range(self, start: date, end_exclusive: date) -> bool:
-        """Synchroniseer een half-open datumbereik atomair richting de cache.
-
-        Providers met ``fetch_range`` (zoals MyX) halen de hele periode in één
-        request op. Oudere providers blijven compatibel via ``fetch_day``.
-        Bij een fout wordt géén deel van de bestaande cache overschreven.
-        """
+        """Synchroniseer een half-open datumbereik atomair richting de cache."""
         if end_exclusive <= start:
             raise ValueError("end_exclusive moet na start liggen")
 
+        self._cache.mark_attempt(self._clock.now())
         try:
             fetch_range = getattr(self._provider, "fetch_range", None)
             if callable(fetch_range):
-                lessen = list(fetch_range(start, end_exclusive))
+                lessons = list(fetch_range(start, end_exclusive))
             else:
-                lessen = []
-                dag = start
-                while dag < end_exclusive:
-                    lessen.extend(self._provider.fetch_day(dag))
-                    dag += timedelta(days=1)
+                lessons = []
+                day = start
+                while day < end_exclusive:
+                    lessons.extend(self._provider.fetch_day(day))
+                    day += timedelta(days=1)
         except ProviderError as exc:
             log.warning(
                 "agenda-sync mislukt voor %s..%s: %s",
@@ -82,21 +83,24 @@ class AgendaSyncService:
             self._mark_error(f"{type(exc).__name__}: {exc}")
             return False
 
-        per_dag = defaultdict(list)
-        for les in lessen:
-            per_dag[les.start.date()].append(les)
+        per_day = defaultdict(list)
+        for lesson in lessons:
+            per_day[lesson.start.date()].append(lesson)
 
-        dag = start
-        while dag < end_exclusive:
-            self._cache.put_day(dag, per_dag.get(dag, []))
-            dag += timedelta(days=1)
+        batch: dict[date, list] = {}
+        day = start
+        while day < end_exclusive:
+            batch[day] = per_day.get(day, [])
+            day += timedelta(days=1)
 
+        # Één cache-mutatie en daarna één persistente success-commit.
+        self._cache.put_days(batch)
         self._cache.mark_ok(self._clock.now())
         log.info(
             "agenda-sync ok voor %s..%s (%d lessen)",
             start.isoformat(),
             end_exclusive.isoformat(),
-            len(lessen),
+            len(lessons),
         )
         return True
 
@@ -104,11 +108,6 @@ class AgendaSyncService:
         return self.sync_day(self._clock.now().date())
 
     def sync_default_window(self) -> bool:
-        """Synchroniseer de door de provider gewenste horizon.
-
-        Bestaande providers blijven op één dag. MyX kan een grotere periode in
-        één InternetCalendar-request ophalen.
-        """
         dagen = int(getattr(self._provider, "sync_horizon_days", 1))
         dagen = max(1, min(dagen, 60))
         vandaag = self._clock.now().date()

@@ -1,68 +1,73 @@
-# Touchscreen-GUI — 5-inch 800x480 (WaveSync)
+# WakeSync v8 touchscreen-GUI — Waveshare 5-inch 800×480
 
-## Overzicht
+## Bekende opstelling
 
-Fullscreen GUI voor het 5-inch 800x480 touchscreen (HDMI LCD + touch) op de
-Raspberry Pi 5. Hoofdinterface van de fysieke wekker. Gebouwd met **tkinter**
-(stdlib): geen extra dependencies, werkt op Raspberry Pi OS én op de laptop.
+De huidige WakeSync-prototypeopstelling is:
 
-Belangrijkste eigenschappen:
+- Raspberry Pi 5;
+- Raspberry Pi OS met Wayland/labwc;
+- Waveshare 5-inch HDMI LCD, 800×480;
+- inputdevice `ADS7846 Touchscreen`;
+- Wayland-output op het geteste systeem: `HDMI-A-1`.
 
-- Resolutie 800x480, echte kiosk: `overrideredirect(True)` (géén titlebar),
-  exacte geometrie `800x480+0+0`, plus `-fullscreen` en `-topmost`, zodat ook
-  het desktop-panel verdwijnt. Alleen `-fullscreen` bleek onvoldoende (een
-  hint die XWayland op de Pi negeert). Touch blijft werken; **Alt+Tab vervalt
-  in kiosk-modus**.
-- **Escape** sluit af (development/testen), **F11** schakelt fullscreen.
-- Grote tekst (klok ±130pt, pijlen ±56pt) en grote touch targets.
-- Rustig ontwerp: per scherm één onderwerp, geen overvolle interface.
-- Alle data komt uit de bestaande Runtime (core/settings/agenda). De GUI
-  heeft **geen eigen alarm- of agendalogica**.
+De kernel heeft op het geteste apparaat de ADS7846 al als inputdevice gezien.
+Daarom hoeft WakeSync daar normaal alleen de labwc-mapping te corrigeren.
 
-## Architectuur
+## GUI
 
-```text
-wekker/gui/screens.py   pure logica: Navigator, schermdata, layout-dicts
-                        (géén tkinter → headless testbaar)
-wekker/gui/app.py       tkinter-renderer + 1-seconde-loop (run_once + render)
+De Tkinter-GUI gebruikt exact 800×480. Ondernavigatie heeft een gereserveerde
+vaste zone en kan door een volle agenda niet worden weggedrukt.
+
+Schermen:
+
+- **Vandaag:** grote tijd + alarm; huidige/volgende les met tijd, docent en
+  groot lokaal;
+- **Agenda:** 4 kaarten per pagina, dag- en paginaknoppen, huidige les,
+  pauze-/overlaplabels;
+- **Instellingen:** Weergave, Online beheer, Software, Touchscreen & beeld,
+  Diagnose;
+- **Alarm:** eigen prioriteits-overlay met snooze en countdown;
+- **Slaap:** donker WakeSync-scherm; geen claim dat de fysieke backlight uit is.
+
+## Automatische touchconfiguratie
+
+```bash
+python -m wekker touch-setup --status
 ```
 
-`layout_for(navigator, data)` beschrijft het actieve scherm als data; de app
-rendert die naar widgets. Later echte Osiris-data gebruiken vraagt dus geen
-GUI-refactor: alleen de data verandert.
+Bij bekende, reeds gedetecteerde ADS7846:
 
-## Schermen en navigatie
-
-- **MAIN**: grote tijd, daaronder `Alarm HH:MM`, links `<`, rechts `>`.
-- **AGENDA**: providernaam (bv. `OSIRIS`), `Vandaag`, max. 5 lessen als
-  `09:00  Wiskunde`, `demo-data`-badge bij gesimuleerde data,
-  `Geen lessen vandaag` als het leeg is, links `<` terug.
-- Linker pijl = vorig scherm, rechter pijl = volgend scherm (wrap).
-- Uitbreidbaar: `Navigator.register(...)` voegt schermen toe; pijlen bladeren
-  er automatisch doorheen.
-
-## Starten
-
-```powershell
-# Raspberry Pi (fullscreen):
-python3 -m wekker gui
-
-# Development op laptop (venster 800x480):
-python3 -m wekker gui --window
-
-# Webinterface erbij (zelfde proces, zie README):
-python3 -m wekker gui --host 0.0.0.0 --port 8080
+```bash
+python -m wekker touch-setup
 ```
 
-De GUI start ook de web-API in hetzelfde proces (achtergrondthread), zodat
-telefoon én touchscreen tegelijk werken. Afsluiten: Escape (of Ctrl+C in de
-terminal); de lamp gaat via de normale shutdown uit.
+WakeSync maakt zo nodig een backup van `~/.config/labwc/rc.xml` en schrijft de
+mapping:
 
-## Testen
+```xml
+<touch deviceName="ADS7846 Touchscreen"
+       mapToOutput="HDMI-A-1"
+       mouseEmulation="yes" />
+```
 
-- Geautomatiseerd (headless): `python -m pytest tests/unit/test_gui.py -q`
-  (navigator, layouts, formattering, agenda-mapping, Runtime-koppeling).
-- Handmatig: `python -m wekker gui --window` — controleer klok, alarmtijd,
-  beide pijlen, agendascherm met (demo-)lessen en Escape-afsluiting.
-- Op de Pi: `python3 -m wekker gui` — controleer of titlebar én desktop-panel
-  weg zijn (volledig 800x480), touchrespons van beide pijlen en Escape-afsluiting.
+Daarna wordt `labwc --reconfigure` geprobeerd.
+
+Als ADS7846 níet gedetecteerd is, schrijft WakeSync niets aan bootconfig zonder
+expliciete bevestiging van het hardwareprofiel. Voor het bekende profiel:
+
+```bash
+sudo .venv/bin/python -m wekker touch-setup \
+  --profile waveshare-5-hdmi-ads7846 \
+  --confirmed \
+  --home "$HOME"
+sudo reboot
+python -m wekker touch-setup --verify
+```
+
+Een tweede uitvoering is idempotent.
+
+## Bekende helderheidsbeperking
+
+Op het huidige scherm was `/sys/class/backlight` leeg en meldde DDC/CI dat de
+monitor geen DDC/CI ondersteunt. Daarom zijn hardware-backlight en donkere
+slaapweergave twee verschillende dingen.

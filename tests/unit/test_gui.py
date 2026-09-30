@@ -87,7 +87,7 @@ def test_agenda_layout_leeg_en_limiet():
     leeg = agenda_layout(build_agenda_data([], provider_name="OSIRIS"))
     assert leeg["rows"] == []
     assert leeg["empty_text"] == "Geen lessen op deze dag"
-    assert leeg["simulated"] is True
+    assert leeg["simulated"] is False  # lege echte dag krijgt geen voorbeeldbadge
     veel = [_les(8 + i // 2, (i % 2) * 30, vak=f"Vak{i}") for i in range(8)]
     beperkt = agenda_layout(build_agenda_data(veel, provider_name="OSIRIS"))
     assert len(beperkt["rows"]) == AGENDA_MAX_ROWS

@@ -1,4 +1,4 @@
-# WaveSync online instellingenserver (`test2.pl`)
+# WakeSync online instellingenserver (`test2.pl`)
 
 Dit CGI-script hoort op:
 
@@ -56,7 +56,7 @@ worden nooit via deze server opgeslagen.
    Een werkende installatie geeft JSON terug met onder andere:
 
    ```json
-   {"ok":true,"service":"wavesync","version":5,"storage_writable":true,"storage_backend":"file-per-device"}
+   {"ok":true,"service":"wakesync","version":8,"storage_writable":true,"storage_backend":"file-per-device"}
    ```
 
 5. HTTPS moet ingeschakeld blijven. De sessiecookie gebruikt `Secure`,
@@ -73,7 +73,7 @@ schrijfrechten van `WEKKER_DATA_DIR`.
 
 ## Schaalbaarheid
 
-Iedere WaveSync krijgt een eigen JSON-bestand en file-lock. Daardoor kunnen
+Iedere WakeSync krijgt een eigen JSON-bestand en file-lock. Daardoor kunnen
 honderden apparaten onafhankelijk synchroniseren zonder één groot gedeeld
 bestand te locken. De device-ID's zijn willekeurig en niet afleidbaar van
 andere gebruikers.
@@ -83,6 +83,20 @@ volgende stap.
 
 ## Back-up
 
-Maak back-ups van `WEKKER_DATA_DIR`. Zonder die map blijven fysieke WaveSyncs
+Maak back-ups van `WEKKER_DATA_DIR`. Zonder die map blijven fysieke WakeSyncs
 werken met hun lokale instellingen, maar bestaande online beheeraccounts gaan
 verloren.
+
+
+## WakeSync v8
+
+Versie 8 behoudt de slaapmodusinstellingen en scherpt sessie-/foutafhandeling aan. De online beheerinstellingen omvatten onder andere:
+
+- uitschakelen of activeren na 30 seconden, 1 minuut, 5 minuten of 15 minuten;
+- alleen het WakeSync-logo tonen;
+- logo + tijd tonen;
+- logo + tijd + datum tonen.
+
+De opslagmap heet intern nog `wavesync` voor backwards compatibility met
+bestaande gekoppelde wekkers. Dit is alleen een serverpad; de productnaam in
+de interface is WakeSync.

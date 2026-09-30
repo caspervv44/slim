@@ -12,3 +12,13 @@ wekker-settings.json
 .env.*
 *.pem
 *.key
+
+# WakeSync lokale runtime-/identiteitsbestanden
+.wekker-cloud.json
+.wakesync-agenda-cache.json
+.wakesync-alarm.json
+.wakesync-update-status.json
+.wakesync-update-journal.json
+.wakesync-backups/
+wakesync-update.log
+wakesync-diagnose.json

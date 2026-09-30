@@ -26,6 +26,7 @@ ALLOWED_VISIBLE_FIELDS = frozenset(
 ALLOWED_BLINK_PATTERNS = frozenset({"steady", "blink", "pulse"})
 ALLOWED_NIGHT_MODES = frozenset({"off", "dim"})
 ALLOWED_THEMES = frozenset({"midnight", "ocean", "light", "amber"})
+ALLOWED_SLEEP_VIEWS = frozenset({"logo", "logo_time", "logo_time_date"})
 #: Schoolplatformen die de setup-app mag aanbieden. Alleen "mock" heeft een
 #: werkende adapter; de rest is voorbereid maar "nog niet beschikbaar".
 ALLOWED_PROVIDERS = frozenset({"mock", "magister", "somtoday", "osiris", "myx"})
@@ -122,6 +123,9 @@ class DisplaySettings:
     brightness: int = 80
     theme: str = "midnight"
     on_duration_seconds: int = 30
+    # Slaapmodus is een donkere screensaver; 0 betekent "nooit".
+    sleep_after_seconds: int = 60
+    sleep_view: str = "logo_time_date"
     night_mode: str = "dim"
     night_start: str = "23:00"
     night_end: str = "07:00"
@@ -139,6 +143,14 @@ class DisplaySettings:
         self.on_duration_seconds = _check_range(
             self.on_duration_seconds, "display.on_duration_seconds", 1, 600
         )
+        self.sleep_after_seconds = _check_range(
+            self.sleep_after_seconds, "display.sleep_after_seconds", 0, 3600
+        )
+        if self.sleep_view not in ALLOWED_SLEEP_VIEWS:
+            raise SettingsError(
+                f"display.sleep_view onbekend: {self.sleep_view!r} "
+                f"(kies uit {sorted(ALLOWED_SLEEP_VIEWS)})"
+            )
         if self.night_mode not in ALLOWED_NIGHT_MODES:
             raise SettingsError(f"display.night_mode onbekend: {self.night_mode!r}")
         self.night_start = _check_time(self.night_start, "display.night_start")

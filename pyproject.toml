@@ -1,11 +1,11 @@
 [project]
 name = "wekker"
-version = "0.1.0"
-description = "Slimme fysieke schoolwekker — softwarebasis (laptop-testbaar, Pi-klaar)"
+version = "8.0.0"
+description = "WakeSync slimme fysieke schoolwekker — Raspberry Pi 5 software"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "WaveSync projectteam" }]
+authors = [{ name = "WakeSync projectteam" }]
 dependencies = ["qrcode[pil]>=7.4,<9"]
 
 [project.optional-dependencies]
@@ -25,3 +25,6 @@ pythonpath = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.setuptools.package-data]
+wekker = ["assets/*.png"]

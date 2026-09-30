@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -28,10 +29,56 @@ class BacklightController:
         self._root = Path(override) if override else Path(sysfs_root)
         self._last_percent: int | None = None
         self._warned = False
+        self._worker_lock = threading.Lock()
+        self._worker_running = False
+        self._pending_percent: int | None = None
 
     @staticmethod
     def _clamp(percent: int) -> int:
         return max(0, min(100, int(percent)))
+
+    def set_percent_async(self, percent: int) -> None:
+        """Plan een helderheidswijziging zonder de GUI te blokkeren.
+
+        Sommige HDMI-methodes (vooral DDC/CI) kunnen meerdere seconden nodig
+        hebben om te melden dat een scherm de functie niet ondersteunt. De
+        nieuwste gewenste waarde wordt daarom in een worker verwerkt. Als er
+        tijdens die worker een nieuwe waarde binnenkomt, wordt alleen die
+        nieuwste waarde daarna nog toegepast.
+        """
+        percent = self._clamp(percent)
+        with self._worker_lock:
+            self._pending_percent = percent
+            if self._worker_running:
+                return
+            self._worker_running = True
+
+        def worker() -> None:
+            try:
+                while True:
+                    with self._worker_lock:
+                        value = self._pending_percent
+                        self._pending_percent = None
+                    if value is None:
+                        return
+                    self.set_percent(value)
+                    with self._worker_lock:
+                        if self._pending_percent is None:
+                            return
+            finally:
+                with self._worker_lock:
+                    self._worker_running = False
+                    # Een waarde kan precies tussen de laatste controle en het
+                    # vrijgeven van de worker zijn binnengekomen.
+                    pending = self._pending_percent
+                if pending is not None:
+                    self.set_percent_async(pending)
+
+        threading.Thread(
+            target=worker,
+            name="wakesync-backlight",
+            daemon=True,
+        ).start()
 
     def set_percent(self, percent: int) -> bool:
         """Pas helderheid toe. Geeft True terug zodra een methode slaagt."""
@@ -126,6 +173,11 @@ class BacklightController:
         return result.returncode == 0
 
     def _set_xrandr(self, percent: int) -> bool:
+        # xrandr regelt alleen een X11-output. Onder Raspberry Pi OS/labwc
+        # (Wayland) kan een XWayland-output bestaan die niet het echte HDMI-
+        # scherm bestuurt; probeer die route daarom niet.
+        if os.getenv("XDG_SESSION_TYPE", "").lower() == "wayland":
+            return False
         exe = shutil.which("xrandr")
         if not exe or not os.getenv("DISPLAY"):
             return False

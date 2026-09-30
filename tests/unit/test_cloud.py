@@ -123,3 +123,74 @@ def test_remote_feed_update_is_delivered_and_acknowledged(tmp_path: Path, monkey
     manager.acknowledge_feed_update(update["id"])
     manager.sync_now_for_test(default_settings())
     assert any(action == "ack_feed" for action, _payload in calls)
+
+
+def test_remote_revision_wordt_pas_na_apply_bevestigd(tmp_path: Path, monkeypatch) -> None:
+    manager = CloudSettingsManager(
+        "https://example.test/test2.pl", tmp_path / "cloud.json"
+    )
+    local_settings = default_settings()
+    local = cloud_settings(local_settings)
+    manager._save_state({
+        "device_id": "a" * 64,
+        "device_key": "b" * 64,
+        "management_url": "https://example.test/test2.pl?d=" + "a" * 64,
+        "username": "basis",
+        "initial_password": "AbCdEfGh23456789",
+        "password_changed": False,
+        "revision": 1,
+        "last_synced_hash": "oude-hash",
+        "registered": True,
+        "last_sync_at": "",
+    })
+
+    remote = cloud_settings(default_settings())
+    remote["locale"]["time_format"] = "12h"
+
+    def fake(action, payload, *, state=None):
+        assert action == "pull"
+        return {
+            "ok": True,
+            "settings": remote,
+            "revision": 2,
+            "password_changed": False,
+        }
+
+    monkeypatch.setattr(manager, "_json_request", fake)
+    manager.sync_now_for_test(local_settings)
+
+    # Alleen ontvangen is nog geen ACK: de lokale revision blijft 1.
+    assert manager._load_state()["revision"] == 1
+    patch = manager.consume_remote_patch()
+    assert patch is not None
+    assert patch["locale"]["time_format"] == "12h"
+    assert manager._load_state()["revision"] == 1
+
+    applied = local_settings.update_from_dict(patch)
+    manager.acknowledge_remote_patch(applied)
+
+    state = manager._load_state()
+    assert state["revision"] == 2
+    assert state["last_sync_at"]
+
+
+def test_mislukte_remote_apply_blijft_op_oude_revision(tmp_path: Path) -> None:
+    manager = CloudSettingsManager(
+        "https://example.test/test2.pl", tmp_path / "cloud.json"
+    )
+    manager._save_state({
+        "device_id": "a" * 64,
+        "device_key": "b" * 64,
+        "management_url": "https://example.test/test2.pl?d=" + "a" * 64,
+        "username": "basis",
+        "initial_password": "AbCdEfGh23456789",
+        "password_changed": False,
+        "revision": 4,
+        "last_synced_hash": "hash",
+        "registered": True,
+    })
+    manager._pending = (5, {"locale": {"time_format": "12h"}})
+    assert manager.consume_remote_patch() is not None
+    manager.reject_remote_patch()
+    assert manager._load_state()["revision"] == 4
+    assert manager._inflight_remote is None

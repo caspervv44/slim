@@ -15,8 +15,8 @@ use POSIX qw(strftime);
 binmode STDOUT, ':encoding(UTF-8)';
 binmode STDERR, ':encoding(UTF-8)';
 
-# WaveSync cloudbeheer.
-# Bewaart WaveSync-instellingen per apparaat. Een MyX-feedlink wordt alleen
+# WakeSync cloudbeheer.
+# Bewaart WakeSync-instellingen per apparaat. Een MyX-feedlink wordt alleen
 # tijdelijk bewaard totdat de gekoppelde Pi hem via HTTPS heeft opgehaald en
 # bevestigd; daarna wordt de URL uit het serverrecord verwijderd.
 
@@ -44,8 +44,8 @@ if ($method eq 'POST') {
 my %query = _parse_params($ENV{QUERY_STRING} || '');
 if ($method eq 'GET' && ($query{health} || '') eq '1') {
     _json_ok({
-        service => 'wavesync',
-        version => 6,
+        service => 'wakesync',
+        version => 8,
         storage_writable => JSON::PP::true,
         storage_backend => 'file-per-device',
     });
@@ -123,7 +123,7 @@ sub _handle_api {
 
         my $salt = _random_hex(16);
         my $record = {
-            schema_version => 6,
+            schema_version => 8,
             device_id => $device_id,
             device_key_hash => sha256_hex($device_key),
             username => $username,
@@ -325,6 +325,20 @@ sub _web_save {
     _valid_device_id($device_id)
         or _html(400, _page('Fout', '<div class="card">Ongeldige wekker-ID.</div>'));
 
+    # A3: toon nooit instellingen/formulierdata zonder geldige sessie.
+    # CSRF wordt daarna afzonderlijk binnen de mutatie gecontroleerd.
+    my $auth = _with_record($device_id, sub {
+        my ($record) = @_;
+        my ($sid, $session) = _current_session($record);
+        return { sid => $sid, session => $session };
+    });
+    if (!$auth->{session}) {
+        _html(401, _login_page(
+            $device_id,
+            'Sessie verlopen. Log opnieuw in.'
+        ));
+    }
+
     my $result;
     eval {
         $result = _update_record($device_id, sub {
@@ -373,6 +387,15 @@ sub _web_save {
                     : ($settings->{display}{theme} || 'midnight');
             $settings->{display}{on_duration_seconds} =
                 _clamp_int($form->{display_on_duration}, 1, 600, 30);
+            $settings->{display}{sleep_after_seconds} =
+                _clamp_int($form->{sleep_after_seconds}, 0, 3600, 60);
+            my %sleep_views = map { $_ => 1 } qw(
+                logo logo_time logo_time_date
+            );
+            $settings->{display}{sleep_view} =
+                $sleep_views{$form->{sleep_view} || ''}
+                    ? $form->{sleep_view}
+                    : ($settings->{display}{sleep_view} || 'logo_time_date');
 
             my %night = map { $_ => 1 } qw(off dim);
             $settings->{display}{night_mode} =
@@ -441,7 +464,7 @@ sub _web_save {
         1;
     } or do {
         my $e = $@;
-        if (ref($e) eq 'WaveSync::Error') {
+        if (ref($e) eq 'WakeSync::Error') {
             my $r = _with_record($device_id, sub {
                 my ($record) = @_;
                 my (undef, $session) = _current_session($record);
@@ -461,6 +484,20 @@ sub _web_change_password {
     my ($device_id, $form) = @_;
     _valid_device_id($device_id)
         or _html(400, _page('Fout', '<div class="card">Ongeldige wekker-ID.</div>'));
+
+    # A3: toon nooit instellingen/formulierdata zonder geldige sessie.
+    # CSRF wordt daarna afzonderlijk binnen de mutatie gecontroleerd.
+    my $auth = _with_record($device_id, sub {
+        my ($record) = @_;
+        my ($sid, $session) = _current_session($record);
+        return { sid => $sid, session => $session };
+    });
+    if (!$auth->{session}) {
+        _html(401, _login_page(
+            $device_id,
+            'Sessie verlopen. Log opnieuw in.'
+        ));
+    }
 
     my $result;
     eval {
@@ -488,7 +525,7 @@ sub _web_change_password {
         1;
     } or do {
         my $e = $@;
-        if (ref($e) eq 'WaveSync::Error') {
+        if (ref($e) eq 'WakeSync::Error') {
             my $r = _with_record($device_id, sub {
                 my ($record) = @_;
                 my (undef, $session) = _current_session($record);
@@ -528,10 +565,10 @@ sub _login_page {
         ? '<div class="notice bad">' . _h($error) . '</div>' : '';
     return _page('Inloggen', qq{
 <div class="shell small-shell">
-  <div class="brand">WaveSync</div>
+  <div class="brand">WakeSync</div>
   <div class="card">
     <h1>Online beheer</h1>
-    <p class="muted">Log in met de gegevens op het scherm van je WaveSync.</p>
+    <p class="muted">Log in met de gegevens op het scherm van je WakeSync.</p>
     $msg
     <form method="post" autocomplete="on">
       <input type="hidden" name="action" value="login">
@@ -549,7 +586,7 @@ sub _settings_page {
     my $s = $r->{settings};
     my $csrf = _h($session->{csrf} || '');
     my $saved = ($ENV{QUERY_STRING} || '') =~ /(?:^|&)saved=1(?:&|$)/
-        ? '<div class="notice ok">Opgeslagen. Je WaveSync neemt de wijziging meestal binnen 30 seconden over.</div>' : '';
+        ? '<div class="notice ok">Opgeslagen. Je WakeSync neemt de wijziging meestal binnen 30 seconden over.</div>' : '';
     my $pw = ($ENV{QUERY_STRING} || '') =~ /(?:^|&)password=1(?:&|$)/
         ? '<div class="notice ok">Wachtwoord gewijzigd.</div>' : '';
     my $err = $error
@@ -605,6 +642,32 @@ sub _settings_page {
         '<option value="' . $value . '"' . $sel . '>' . $label . '</option>'
     } @themes;
 
+    my $sleep_after = int($s->{display}{sleep_after_seconds} // 60);
+    my @sleep_delays = (
+        [0, 'Nooit'],
+        [30, '30 seconden'],
+        [60, '1 minuut'],
+        [300, '5 minuten'],
+        [900, '15 minuten'],
+    );
+    my $sleep_delay_options = join '', map {
+        my ($value, $label) = @$_;
+        my $sel = $sleep_after == $value ? ' selected' : '';
+        '<option value="' . $value . '"' . $sel . '>' . $label . '</option>'
+    } @sleep_delays;
+
+    my $sleep_view = $s->{display}{sleep_view} || 'logo_time_date';
+    my @sleep_views = (
+        ['logo', 'Alleen logo'],
+        ['logo_time', 'Logo + tijd'],
+        ['logo_time_date', 'Logo + tijd + datum'],
+    );
+    my $sleep_view_options = join '', map {
+        my ($value, $label) = @$_;
+        my $sel = $sleep_view eq $value ? ' selected' : '';
+        '<option value="' . $value . '"' . $sel . '>' . $label . '</option>'
+    } @sleep_views;
+
     my $blink_pattern = $s->{alarm}{blink_pattern} || 'blink';
     my $blink_options = join '', map {
         my $sel = $blink_pattern eq $_ ? ' selected' : '';
@@ -633,7 +696,7 @@ sub _settings_page {
 
     return _page('Instellingen', qq{
 <div class="shell theme-@{[_h($theme)]}">\n<header>
-  <div><div class="brand">WaveSync</div><div class="muted">Online beheer</div></div>
+  <div><div class="brand">WakeSync</div><div class="muted">Online beheer</div></div>
   <form method="post">
     <input type="hidden" name="action" value="logout">
     <input type="hidden" name="d" value="@{[_h($device_id)]}">
@@ -670,6 +733,8 @@ $saved$pw$err
 <input type="range" min="0" max="100" name="brightness" value="@{[int($s->{display}{brightness} // 80)]}"></label>
 <label>Thema<select name="theme">$theme_options</select></label>
 <label>Scherm actief na bediening (seconden)<input type="number" min="1" max="600" name="display_on_duration" value="@{[int($s->{display}{on_duration_seconds} // 30)]}"></label>
+<label>Slaapmodus na inactiviteit<select name="sleep_after_seconds">$sleep_delay_options</select></label>
+<label>Slaapweergave<select name="sleep_view">$sleep_view_options</select></label>
 <label>Nachtmodus<select name="night_mode"><option value="dim"$night_dim>Dimmen</option><option value="off"$night_off>Scherm uit</option></select></label>
 <div class="split"><label>Nacht start<input type="time" name="night_start" value="@{[_h($s->{display}{night_start} || '23:00')]}"></label>
 <label>Nacht einde<input type="time" name="night_end" value="@{[_h($s->{display}{night_end} || '07:00')]}"></label></div>
@@ -700,7 +765,7 @@ $saved$pw$err
 <label>MyX iCalendar / Feed-link
 <input name="myx_feed" autocomplete="off" spellcheck="false" placeholder="webcal://aventus.myx.nl/api/InternetCalendar/feed/…"></label>
 <p class="muted">Plak hier de Feed-link uit MyX. De URL wordt na ophalen door je Raspberry Pi weer uit de serveropslag verwijderd.</p>
-<label class="check danger-check"><input type="checkbox" name="clear_myx_feed" value="1"> MyX-feed van deze WaveSync verwijderen</label>
+<label class="check danger-check"><input type="checkbox" name="clear_myx_feed" value="1"> MyX-feed van deze WakeSync verwijderen</label>
 </section>
 </div>
 
@@ -710,7 +775,7 @@ $saved$pw$err
 <div class="grid lower-grid">
 <section class="card">
 <h2>Beveiliging</h2>
-<p class="muted">Iedere WaveSync gebruikt een willekeurige 256-bit beheer-ID en een aparte 256-bit device key.</p>
+<p class="muted">Iedere WakeSync gebruikt een willekeurige 256-bit beheer-ID en een aparte 256-bit device key.</p>
 <form method="post">
 <input type="hidden" name="action" value="password">
 <input type="hidden" name="d" value="@{[_h($device_id)]}">
@@ -729,7 +794,7 @@ $saved$pw$err
 <p class="muted">Wijzigingen worden normaal binnen ongeveer 30 seconden door de klok opgehaald.</p>
 </section>
 </div>
-<footer>WaveSync · apparaat @{[_h(substr($device_id, 0, 10))]}…</footer>
+<footer>WakeSync · apparaat @{[_h(substr($device_id, 0, 10))]}…</footer>
 </div>});
 }
 
@@ -739,7 +804,7 @@ sub _page {
 <html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>@{[_h($title)]} · WaveSync</title>
+<title>@{[_h($title)]} · WakeSync</title>
 <style>
 :root{color-scheme:light;--b:#2563eb;--ink:#172033;--muted:#667085;--line:#e4e8ef;--bg:#f4f7fb;--card:#fff;--ok:#17795a;--bad:#b42318;font-family:Inter,system-ui,sans-serif}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink)}
@@ -773,7 +838,7 @@ sub _choose_data_dir {
     # De oude, werkende test.pl gebruikt:
     #   C:/wamp64/www/veendomain/klok/data
     #
-    # We bewaren WaveSync-records in een eigen submap zodat de oude
+    # We bewaren WakeSync-records in een eigen submap zodat de oude
     # variabelensets niet worden vermengd met de nieuwe JSON-records.
     #
     # WEKKER_DATA_DIR heeft altijd voorrang als je later buiten de
@@ -830,7 +895,7 @@ sub _choose_data_dir {
         push @errors, "$dir: $error";
     }
 
-    die "WaveSync data-directory is niet schrijfbaar. "
+    die "WakeSync data-directory is niet schrijfbaar. "
       . "Geprobeerd: " . join(' | ', @errors);
 }
 
@@ -1094,8 +1159,8 @@ sub _validate_settings {
         ) },
         lamp => { map { $_ => 1 } qw(duration_after_button on_with_alarm) },
         display => { map { $_ => 1 } qw(
-            brightness theme on_duration_seconds night_mode night_start
-            night_end visible_fields
+            brightness theme on_duration_seconds sleep_after_seconds sleep_view
+            night_mode night_start night_end visible_fields
         ) },
         agenda => { map { $_ => 1 } qw(provider auto_sync_minutes) },
         locale => { map { $_ => 1 } qw(timezone region time_format) },
@@ -1276,7 +1341,7 @@ sub _status_text {
 }
 
 {
-    package WaveSync::Error;
+    package WakeSync::Error;
     sub new {
         my ($class, $code, $message) = @_;
         return bless { code => $code, message => $message }, $class;
@@ -1285,7 +1350,7 @@ sub _status_text {
 
 sub _api_exception {
     my ($e) = @_;
-    if (ref($e) eq 'WaveSync::Error') {
+    if (ref($e) eq 'WakeSync::Error') {
         _json_error($e->{code}, $e->{message});
     }
     _json_error(500, 'interne serverfout');
@@ -1293,5 +1358,5 @@ sub _api_exception {
 
 sub _signal_error {
     my ($code, $message) = @_;
-    die WaveSync::Error->new($code, $message);
+    die WakeSync::Error->new($code, $message);
 }

@@ -1,4 +1,4 @@
-"""Veilige cloud-opslag voor niet-geheime WaveSync-instellingen.
+"""Veilige cloud-opslag voor niet-geheime WakeSync-instellingen.
 
 De Raspberry Pi maakt lokaal een willekeurige device-ID, device key en
 startwachtwoord aan. Daardoor kan de QR-code meteen worden getoond, óók als
@@ -20,6 +20,7 @@ import string
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -42,7 +43,7 @@ class CloudError(RuntimeError):
 
 
 def cloud_settings(settings: Any) -> dict[str, Any]:
-    """Instellingen die via het externe WaveSync-beheer mogen synchroniseren.
+    """Instellingen die via het externe WakeSync-beheer mogen synchroniseren.
 
     Geheimen zoals de MyX-feedlink horen bewust niet in dit object. De feed
     gebruikt een apart, eenmalig aflevermechanisme zodat de URL na ophalen door
@@ -66,6 +67,9 @@ def _digest(data: dict[str, Any]) -> str:
 def _random_password(length: int = 16) -> str:
     return "".join(secrets.choice(PASSWORD_ALPHABET) for _ in range(length))
 
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
 
 @dataclass(frozen=True)
 class CloudDisplayInfo:
@@ -76,6 +80,8 @@ class CloudDisplayInfo:
     password_changed: bool = False
     status: str = "Online beheer voorbereiden…"
     error: str = ""
+    revision: int = 0
+    last_sync_at: str = ""
 
 
 class CloudSettingsManager:
@@ -97,7 +103,11 @@ class CloudSettingsManager:
         self.interval_seconds = max(10, int(interval_seconds))
         self._lock = threading.Lock()
         self._worker: threading.Thread | None = None
-        self._pending: dict[str, Any] | None = None
+        # Remote settings worden pas als gesynchroniseerd gemarkeerd nadat de
+        # hoofdthread ze succesvol heeft gevalideerd, opgeslagen en toegepast.
+        # Dit voorkomt dat oude lokale settings een webwijziging terugduwen.
+        self._pending: tuple[int, dict[str, Any]] | None = None
+        self._inflight_remote: tuple[int, dict[str, Any]] | None = None
         self._pending_feed: dict[str, Any] | None = None
         self._feed_ack_id: str | None = None
         self._next_sync = 0.0
@@ -162,6 +172,7 @@ class CloudSettingsManager:
         state.setdefault("revision", 0)
         state.setdefault("last_synced_hash", "")
         state.setdefault("password_changed", False)
+        state.setdefault("last_sync_at", "")
         if changed:
             self._save_state(state)
         return state
@@ -197,12 +208,18 @@ class CloudSettingsManager:
             password_changed=bool(state.get("password_changed", False)),
             status=status,
             error=error,
+            revision=int(state.get("revision", 0) or 0),
+            last_sync_at=str(state.get("last_sync_at", "")),
         )
 
     def maybe_sync(self, settings: Any) -> None:
         now = time.monotonic()
         with self._lock:
             if self._worker is not None and self._worker.is_alive():
+                return
+            # Nooit een lokale snapshot pushen terwijl een nieuwere remote
+            # revisie nog op de hoofdthread wacht om toegepast te worden.
+            if self._pending is not None or self._inflight_remote is not None:
                 return
             if now < self._next_sync:
                 return
@@ -211,7 +228,7 @@ class CloudSettingsManager:
             self._worker = threading.Thread(
                 target=self._sync_worker,
                 args=(snapshot,),
-                name="wavesync-cloud-sync",
+                name="wakesync-cloud-sync",
                 daemon=True,
             )
             self._worker.start()
@@ -222,10 +239,39 @@ class CloudSettingsManager:
             self._next_sync = 0.0
 
     def consume_remote_patch(self) -> dict[str, Any] | None:
+        """Lever een remote patch aan de hoofdthread zonder hem al te ACK'en."""
         with self._lock:
-            patch = self._pending
+            pending = self._pending
             self._pending = None
+            if pending is None:
+                return None
+            self._inflight_remote = pending
+            _revision, patch = pending
             return patch
+
+    def acknowledge_remote_patch(self, applied_settings: Any) -> None:
+        """Bevestig pas ná succesvolle runtime-apply de remote revisie."""
+        with self._lock:
+            pending = self._inflight_remote
+            self._inflight_remote = None
+            self._next_sync = 0.0
+        if pending is None:
+            return
+        revision, _remote = pending
+        state = self._ensure_local_identity()
+        state["revision"] = int(revision)
+        state["last_synced_hash"] = _digest(cloud_settings(applied_settings))
+        state["last_sync_at"] = _iso_now()
+        self._save_state(state)
+        with self._lock:
+            self._status = "Gesynchroniseerd"
+            self._error = ""
+
+    def reject_remote_patch(self) -> None:
+        """Laat een mislukte remote patch later opnieuw ophalen."""
+        with self._lock:
+            self._inflight_remote = None
+            self._next_sync = 0.0
 
     def consume_feed_update(self) -> dict[str, Any] | None:
         """Geef een nieuwe MyX-feedopdracht één keer door aan de hoofdthread."""
@@ -257,7 +303,7 @@ class CloudSettingsManager:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "WaveSync/0.3",
+            "User-Agent": "WakeSync/8.0",
         }
         if state and state.get("device_id") and state.get("device_key") and action != "register":
             headers["X-Wekker-Device"] = str(state["device_id"])
@@ -311,6 +357,7 @@ class CloudSettingsManager:
                 )
                 state["revision"] = int(reply.get("revision", 1))
                 state["last_synced_hash"] = _digest(local)
+                state["last_sync_at"] = _iso_now()
                 self._save_state(state)
                 with self._lock:
                     self._status = "Online beheer is klaar"
@@ -359,10 +406,15 @@ class CloudSettingsManager:
             local_revision = int(state.get("revision", 0))
 
             if revision > local_revision:
+                # Belangrijk: revision/last_synced_hash hier nog NIET verhogen.
+                # De hoofdthread moet de patch eerst daadwerkelijk toepassen.
+                state["last_sync_at"] = _iso_now()
+                self._save_state(state)
                 with self._lock:
-                    self._pending = remote_settings
-                state["revision"] = revision
-                state["last_synced_hash"] = _digest(remote_settings)
+                    self._pending = (revision, remote_settings)
+                    self._status = "Nieuwe instellingen ontvangen"
+                    self._error = ""
+                return
             elif local_hash != last_hash:
                 pushed = self._json_request(
                     "push",
@@ -372,6 +424,7 @@ class CloudSettingsManager:
                 state["revision"] = int(pushed["revision"])
                 state["last_synced_hash"] = local_hash
 
+            state["last_sync_at"] = _iso_now()
             self._save_state(state)
             with self._lock:
                 self._status = "Gesynchroniseerd"
