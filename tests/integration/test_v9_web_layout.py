@@ -40,7 +40,7 @@ def test_loginpagina_is_responsive_en_toont_openbare_configuratie_tabs(tmp_path:
     data_dir.mkdir()
     device = "b" * 64
     record = {
-        "schema_version": 9,
+        "schema_version": 10,
         "device_id": device,
         "sessions": {},
         "settings": {
@@ -64,10 +64,10 @@ def test_loginpagina_is_responsive_en_toont_openbare_configuratie_tabs(tmp_path:
 
 
 @pytest.mark.skipif(PERL is None, reason="Perl niet beschikbaar")
-def test_health_endpoint_is_v9(tmp_path: Path):
+def test_health_endpoint_is_v10(tmp_path: Path):
     script = Path(__file__).parents[2] / "deploy" / "cloud" / "test2.pl"
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     output = run_get(script, data_dir, "health=1")
     assert '"service":"wakesync"' in output.replace(" ", "")
-    assert '"version":9' in output.replace(" ", "")
+    assert '"version":10' in output.replace(" ", "")

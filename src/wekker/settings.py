@@ -27,7 +27,7 @@ ALLOWED_BLINK_PATTERNS = frozenset({"steady", "blink", "pulse"})
 ALLOWED_NIGHT_MODES = frozenset({"off", "dim"})
 ALLOWED_THEMES = frozenset({"midnight", "ocean", "light", "amber"})
 ALLOWED_SLEEP_VIEWS = frozenset({"logo", "logo_time", "logo_time_date"})
-ALLOWED_SLEEP_EFFECTS = frozenset({"off", "soft_glow", "pulse_glow", "aurora"})
+ALLOWED_SLEEP_EFFECTS = frozenset({"off", "soft_glow", "pulse_glow", "aurora", "liquid_motion"})
 #: Schoolplatformen die de setup-app mag aanbieden. Alleen "mock" heeft een
 #: werkende adapter; de rest is voorbereid maar "nog niet beschikbaar".
 ALLOWED_PROVIDERS = frozenset({"mock", "magister", "somtoday", "osiris", "myx"})
@@ -72,7 +72,14 @@ def _check_range(value: int, veld: str, low: int, high: int) -> int:
 
 
 @dataclass
-class AlarmSettings:
+class AlarmProfile:
+    """Eén zelfstandig dagelijks alarm.
+
+    ``id`` blijft stabiel zodat meerdere alarmen dezelfde dag onafhankelijk
+    kunnen worden geactiveerd, gesnoozed en afgevinkt.
+    """
+
+    id: str = "alarm-1"
     time: str = "07:30"
     enabled: bool = True
     snooze_minutes: int = 9
@@ -82,27 +89,118 @@ class AlarmSettings:
     lamp_brightness: int = 100
     lamp_blink: bool = True
     blink_pattern: str = "blink"
-    # Gereserveerd: nog niet toegepast door de core (zie docs/architecture.md).
-    # Blijft instelbaar zodat de setup-app het veld al kan tonen.
     ramp_up_seconds: int = 30
 
     def __post_init__(self) -> None:
+        self.id = str(self.id or "").strip()
+        if not self.id or len(self.id) > 64:
+            raise SettingsError("alarm-id moet 1–64 tekens lang zijn")
         self.time = _check_time(self.time, "alarm.time")
         self.enabled = _check_bool(self.enabled, "alarm.enabled")
-        self.snooze_minutes = _check_range(self.snooze_minutes, "alarm.snooze_minutes", 1, 60)
+        self.snooze_minutes = _check_range(
+            self.snooze_minutes, "alarm.snooze_minutes", 1, 60
+        )
         self.volume = _check_range(self.volume, "alarm.volume", 0, 100)
-        self.speaker_enabled = _check_bool(self.speaker_enabled, "alarm.speaker_enabled")
+        self.speaker_enabled = _check_bool(
+            self.speaker_enabled, "alarm.speaker_enabled"
+        )
         self.lamp_brightness = _check_range(
             self.lamp_brightness, "alarm.lamp_brightness", 0, 100
         )
         self.lamp_blink = _check_bool(self.lamp_blink, "alarm.lamp_blink")
         if self.blink_pattern not in ALLOWED_BLINK_PATTERNS:
-            raise SettingsError(f"alarm.blink_pattern onbekend: {self.blink_pattern!r}")
+            raise SettingsError(
+                f"alarm.blink_pattern onbekend: {self.blink_pattern!r}"
+            )
         self.ramp_up_seconds = _check_range(
             self.ramp_up_seconds, "alarm.ramp_up_seconds", 0, 3600
         )
         if not self.sound or not isinstance(self.sound, str):
             raise SettingsError("alarm.sound moet een niet-lege naam zijn")
+
+
+@dataclass
+class AlarmSettings:
+    """Alarmconfiguratie met backwards compatibility voor v9 en ouder.
+
+    De oude velden blijven bestaan voor cloud/webcompatibiliteit. ``alarms`` is
+    in v10 de bron van waarheid. Bij oude instellingen wordt automatisch één
+    profiel aangemaakt; de legacyvelden spiegelen altijd het eerste profiel.
+    """
+
+    time: str = "07:30"
+    enabled: bool = True
+    snooze_minutes: int = 9
+    sound: str = "beep"
+    volume: int = 70
+    speaker_enabled: bool = True
+    lamp_brightness: int = 100
+    lamp_blink: bool = True
+    blink_pattern: str = "blink"
+    ramp_up_seconds: int = 30
+    alarms: list[AlarmProfile | dict[str, Any]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # Valideer eerst de legacy/defaultwaarden zodat oude JSON geldig blijft.
+        legacy = AlarmProfile(
+            id="alarm-1",
+            time=self.time,
+            enabled=self.enabled,
+            snooze_minutes=self.snooze_minutes,
+            sound=self.sound,
+            volume=self.volume,
+            speaker_enabled=self.speaker_enabled,
+            lamp_brightness=self.lamp_brightness,
+            lamp_blink=self.lamp_blink,
+            blink_pattern=self.blink_pattern,
+            ramp_up_seconds=self.ramp_up_seconds,
+        )
+
+        normalized: list[AlarmProfile] = []
+        for raw in self.alarms:
+            if isinstance(raw, AlarmProfile):
+                profile = raw
+            elif isinstance(raw, dict):
+                try:
+                    profile = AlarmProfile(**raw)
+                except TypeError as exc:
+                    raise SettingsError(f"Onbekende alarmprofielsleutel: {exc}") from exc
+            else:
+                raise SettingsError("alarm.alarms moet een lijst met alarmobjecten zijn")
+            normalized.append(profile)
+
+        if not normalized:
+            normalized = [legacy]
+        if len(normalized) > 12:
+            raise SettingsError("Maximaal 12 alarmen zijn toegestaan")
+
+        ids = [p.id for p in normalized]
+        if len(set(ids)) != len(ids):
+            raise SettingsError("Alarm-id's moeten uniek zijn")
+
+        # Stabiele tijdvolgorde in opslag/UI.
+        normalized.sort(key=lambda p: (p.time, p.id))
+        self.alarms = normalized
+        self._mirror_primary()
+
+    def _mirror_primary(self) -> None:
+        primary = self.alarms[0]
+        self.time = primary.time
+        self.enabled = primary.enabled
+        self.snooze_minutes = primary.snooze_minutes
+        self.sound = primary.sound
+        self.volume = primary.volume
+        self.speaker_enabled = primary.speaker_enabled
+        self.lamp_brightness = primary.lamp_brightness
+        self.lamp_blink = primary.lamp_blink
+        self.blink_pattern = primary.blink_pattern
+        self.ramp_up_seconds = primary.ramp_up_seconds
+
+    def get(self, alarm_id: str) -> AlarmProfile | None:
+        for profile in self.alarms:
+            if profile.id == alarm_id:
+                return profile
+        return None
 
 
 @dataclass
@@ -262,8 +360,18 @@ class Settings:
             raise SettingsError(f"Onbekende instellingsleutel: {exc}") from exc
 
     def update_from_dict(self, patch: dict[str, Any]) -> Settings:
-        """Valideer een gedeeltelijke update; atomic: bij fout verandert niets."""
+        """Valideer een gedeeltelijke update; atomic: bij fout verandert niets.
+
+        v10 bewaart meerdere alarmen in ``alarm.alarms``. Oude cloud/webclients
+        die alleen ``alarm.time`` of ``alarm.volume`` wijzigen blijven werken:
+        zo'n wijziging wordt ook op het eerste alarmprofiel toegepast.
+        """
         huidig = self.to_dict()
+        legacy_alarm_keys = {
+            "time", "enabled", "snooze_minutes", "sound", "volume",
+            "speaker_enabled", "lamp_brightness", "lamp_blink",
+            "blink_pattern", "ramp_up_seconds",
+        }
         for sectie, waarden in patch.items():
             if sectie not in huidig:
                 raise SettingsError(f"Onbekende sectie: {sectie!r}")
@@ -272,6 +380,16 @@ class Settings:
             for sleutel in waarden:
                 if sleutel not in huidig[sectie]:
                     raise SettingsError(f"Onbekende sleutel: {sectie}.{sleutel}")
+
+            waarden = dict(waarden)
+            if sectie == "alarm" and "alarms" not in waarden:
+                alarms = [dict(x) for x in huidig["alarm"].get("alarms", [])]
+                if alarms:
+                    for key, value in waarden.items():
+                        if key in legacy_alarm_keys:
+                            alarms[0][key] = value
+                    waarden["alarms"] = alarms
+
             merged = {**huidig[sectie], **waarden}
             huidig[sectie] = merged
         return Settings.from_dict(huidig)

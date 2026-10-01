@@ -17,7 +17,7 @@ from typing import Any
 from wekker.storage import JsonStore, StorageError
 
 log = logging.getLogger(__name__)
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @dataclass
@@ -32,6 +32,12 @@ class AlarmRuntimeSnapshot:
     # gebruiker het fysiek heeft afgehandeld. Hiermee kan een achterwaartse
     # klokcorrectie vóór de echte alarmtijd veilig worden hersteld.
     missed_date: str | None = None
+    # v10: meerdere onafhankelijke alarmen. De legacyvelden hierboven blijven
+    # staan zodat oude runtimebestanden veilig gemigreerd kunnen worden.
+    active_alarm_id: str | None = None
+    last_trigger_dates: dict[str, str] | None = None
+    dismissed_dates: dict[str, str] | None = None
+    missed_dates: dict[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -43,6 +49,10 @@ class AlarmRuntimeSnapshot:
             "dismissed_date": self.dismissed_date,
             "missed_notice": self.missed_notice,
             "missed_date": self.missed_date,
+            "active_alarm_id": self.active_alarm_id,
+            "last_trigger_dates": dict(self.last_trigger_dates or {}),
+            "dismissed_dates": dict(self.dismissed_dates or {}),
+            "missed_dates": dict(self.missed_dates or {}),
         }
 
 
@@ -64,7 +74,7 @@ class AlarmRuntimeStore:
             return None
         try:
             schema = int(raw.get("schema_version", 0))
-            if schema not in {1, SCHEMA_VERSION}:
+            if schema not in {1, 2, SCHEMA_VERSION}:
                 raise ValueError("onbekende schema-versie")
             state = str(raw.get("state", "sleeping"))
             if state not in {"sleeping", "ringing", "snoozed", "dismissed"}:
@@ -74,6 +84,16 @@ class AlarmRuntimeStore:
                 value = raw.get(key)
                 if value:
                     datetime.fromisoformat(str(value))
+            def _strmap(name: str) -> dict[str, str]:
+                value = raw.get(name, {}) if schema >= 3 else {}
+                if not isinstance(value, dict):
+                    raise ValueError(f"{name} moet een object zijn")
+                return {
+                    str(k): str(v)
+                    for k, v in value.items()
+                    if str(k).strip() and str(v).strip()
+                }
+
             return AlarmRuntimeSnapshot(
                 state=state,
                 ringing_since=_opt_str(raw.get("ringing_since")),
@@ -82,6 +102,10 @@ class AlarmRuntimeStore:
                 dismissed_date=_opt_str(raw.get("dismissed_date")),
                 missed_notice=str(raw.get("missed_notice") or "")[:200],
                 missed_date=_opt_str(raw.get("missed_date")) if schema >= 2 else None,
+                active_alarm_id=_opt_str(raw.get("active_alarm_id")) if schema >= 3 else None,
+                last_trigger_dates=_strmap("last_trigger_dates"),
+                dismissed_dates=_strmap("dismissed_dates"),
+                missed_dates=_strmap("missed_dates"),
             )
         except Exception as exc:
             self._quarantine_corrupt()

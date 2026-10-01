@@ -1,10 +1,29 @@
-# WakeSync v9
+# WakeSync v10
+
+WakeSync v10 bouwt voort op v9 met een scherper C9-logo, een vernieuwde Nothing-OS-geïnspireerde alarmworkflow, meerdere alarmen, een extra Liquid Motion-slaapeffect en robuustere MyX/iCalendar-lokaalverwerking.
+
+Belangrijk: de automatische touch-check/touch-reparatie blijft buiten de productsoftware. De fysieke ADS7846/Wayland-touchkwestie wordt afzonderlijk onderzocht.
+
+### MyX live controleren
+
+De gekoppelde feed kan op de Raspberry Pi veilig worden geïnspecteerd zonder dat de geheime feed-URL wordt afgedrukt:
+
+```bash
+python -m wekker inspect-myx --days 21
+```
+
+Het resultaat meldt onder andere `lessons_with_room`, `room_available` en
+`raw_room_hints`. Die laatste sectie laat alleen privacyvriendelijke propertynamen,
+aantallen en gevonden lokaalcodes zien; de geheime feed-URL wordt niet afgedrukt.
+Als de bron geen lokaal levert, verbergt WakeSync het lokaalveld volledig in
+plaats van een streepje te tonen.
+
 
 WakeSync is een Raspberry Pi 5-schoolwekker met een 5-inch 800×480-interface,
 MyX/iCalendar-rooster, online beheer via `veendomain.nl` en een veilige
 software-updater.
 
-## Wat v9 verandert
+## Wat v10 verandert
 
 - Het goedgekeurde **C9-logo** is de vaste WakeSync-branding in de GUI,
   opstartweergave, slaapmodus en online beheer.
@@ -13,8 +32,10 @@ software-updater.
   nog niet betrouwbaar en wordt daarom niet als werkend gepresenteerd.
 - De hoofdnavigatie heeft nu vier vaste tabs:
   **Vandaag · Agenda · Alarm · Instellingen**.
-- Het nieuwe **Alarm**-scherm heeft een 360° uur/minuutkiezer plus snooze,
-  volume, speaker- en lampinstellingen.
+- Het nieuwe **Alarm**-scherm ondersteunt meerdere alarmen. Links staat een **+**;
+  daarna kiest de gebruiker eerst het uur en daarna de minuten op een 360°-dial.
+  Pas na selectie van een bestaand alarm verschijnt rechts de configuratie voor
+  snooze, volume, speaker en lamp.
 - De agenda toont maximaal zes lessen per pagina. Daardoor blijft een normale
   volledige schooldag, inclusief een laatste les van 15:30–17:00, zichtbaar
   zonder dat die ongemerkt op een tweede pagina verdwijnt.
@@ -22,7 +43,8 @@ software-updater.
   lege placeholders en zoekt daarna verder in `DESCRIPTION`, `X-ALT-DESC`,
   `COMMENT`, `RESOURCES` en vendorvelden.
 - De slaapmodus heeft instelbare professionele effecten:
-  **uit**, **zachte gloed**, **pulserende gloed** en **aurora**.
+  **uit**, **zachte gloed**, **pulserende gloed**, **aurora** en
+  **Liquid Motion**.
   De gloedsterkte is instelbaar van 0–100%.
 - `test2.pl` heeft een responsieve beheerinterface:
   op desktop een vaste zijbalk, op telefoon horizontale tabnavigatie.
@@ -59,11 +81,11 @@ via:
 
 `https://veendomain.nl/klok/test2.pl`
 
-Plaats voor v9 ook `deploy/cloud/test2.pl` op de WAMP-server. De health-URL:
+Plaats voor v10 ook `deploy/cloud/test2.pl` op de WAMP-server. De health-URL:
 
 `https://veendomain.nl/klok/test2.pl?health=1`
 
-moet `service: "wakesync"` en `version: 9` melden.
+moet `service: "wakesync"` en `version: 10` melden.
 
 ## Online beheer
 
@@ -95,12 +117,16 @@ LOCATION:—
 X-ALT-DESC;FMTTYPE=text/html:<div>... LVM E3.07 - LVM ...</div>
 ```
 
+Als de echte feed geen lokaalveld bevat, verbergt WakeSync het lokaalblok
+volledig in plaats van `Lokaal: -` te tonen. Controleer een gekoppelde feed
+veilig met `python -m wekker inspect-myx --days 21`.
+
 In beide gevallen wordt het lokaal uit de beschrijving gehaald en doorgegeven
 aan zowel **Vandaag** als **Agenda**.
 
 ## Touchscreen
 
-WakeSync v9 voert geen automatische touchcheck of automatische touchreparatie
+WakeSync v10 voert geen automatische touchcheck of automatische touchreparatie
 meer uit in de productsoftware. De ADS7846-controller kan door Linux zichtbaar
 zijn terwijl de grafische bediening nog niet werkt. Dit hardware/Wayland-
 probleem wordt apart onderzocht zodat de app geen misleidende status toont.
@@ -145,7 +171,7 @@ python -m pytest -q
 perl -c deploy/cloud/test2.pl
 ```
 
-De v9-regressietests dekken onder andere:
+De v10-regressietests dekken onder andere:
 
 - een dag met vijf lessen waarbij 15:30–17:00 zichtbaar moet blijven;
 - `LOCATION:-`/`—` met lokaal in Xedule-beschrijving;

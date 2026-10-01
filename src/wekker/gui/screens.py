@@ -100,7 +100,7 @@ class MainScreenData:
     lesson_label: str = "ROOSTER"
     lesson_subject: str = "Nog niet geladen"
     lesson_time: str = ""
-    lesson_room: str = "—"
+    lesson_room: str = ""
     lesson_teacher: str = ""
     agenda_status: str = "Nog niet geladen"
     notice: str = ""
@@ -136,7 +136,24 @@ class AgendaScreenData:
 
 
 @dataclass(frozen=True)
+class AlarmItemData:
+    id: str
+    time: str
+    enabled: bool
+    day_label: str = "Morgen"
+    snooze_minutes: int = 9
+    sound: str = "beep"
+    volume: int = 70
+    speaker_enabled: bool = True
+    lamp_brightness: int = 100
+    lamp_blink: bool = True
+    blink_pattern: str = "blink"
+    ramp_up_seconds: int = 30
+
+
+@dataclass(frozen=True)
 class AlarmScreenData:
+    # Legacyvelden blijven voor oudere tests/layoutclients beschikbaar.
     time: str = "07:30"
     enabled: bool = True
     snooze_minutes: int = 9
@@ -147,6 +164,7 @@ class AlarmScreenData:
     lamp_blink: bool = True
     blink_pattern: str = "blink"
     ramp_up_seconds: int = 30
+    items: tuple[AlarmItemData, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -187,7 +205,7 @@ class GuiData:
 
 def _lesson_summary(now: datetime, lessons: list, loaded: bool) -> tuple[str, str, str, str, str]:
     if not loaded:
-        return "ROOSTER", "Nog niet geladen", "", "—", ""
+        return "ROOSTER", "Nog niet geladen", "", "", ""
     ordered = sorted(lessons, key=lambda lesson: lesson.start)
     current = next((lesson for lesson in ordered if lesson.start <= now < lesson.end), None)
     if current is not None:
@@ -195,7 +213,7 @@ def _lesson_summary(now: datetime, lessons: list, loaded: bool) -> tuple[str, st
             "HUIDIGE LES",
             current.subject,
             f"{current.start:%H:%M} – {current.end:%H:%M}",
-            current.room or "—",
+            current.room or "",
             current.teacher or "",
         )
     upcoming = next((lesson for lesson in ordered if lesson.start > now), None)
@@ -204,10 +222,10 @@ def _lesson_summary(now: datetime, lessons: list, loaded: bool) -> tuple[str, st
             "VOLGENDE LES",
             upcoming.subject,
             f"{upcoming.start:%H:%M} – {upcoming.end:%H:%M}",
-            upcoming.room or "—",
+            upcoming.room or "",
             upcoming.teacher or "",
         )
-    return "VANDAAG", "Geen lessen meer", "", "—", ""
+    return "VANDAAG", "Geen lessen meer", "", "", ""
 
 
 def build_main_data(
@@ -365,6 +383,23 @@ def agenda_layout(data: AgendaScreenData) -> dict:
 
 
 def alarm_layout(data: AlarmScreenData) -> dict:
+    items = [
+        {
+            "id": item.id,
+            "time": item.time,
+            "enabled": item.enabled,
+            "day_label": item.day_label,
+            "snooze_minutes": item.snooze_minutes,
+            "sound": item.sound,
+            "volume": item.volume,
+            "speaker_enabled": item.speaker_enabled,
+            "lamp_brightness": item.lamp_brightness,
+            "lamp_blink": item.lamp_blink,
+            "blink_pattern": item.blink_pattern,
+            "ramp_up_seconds": item.ramp_up_seconds,
+        }
+        for item in data.items
+    ]
     return {
         "screen": ScreenId.ALARM.value,
         "title": "Alarm",
@@ -378,6 +413,7 @@ def alarm_layout(data: AlarmScreenData) -> dict:
         "lamp_blink": data.lamp_blink,
         "blink_pattern": data.blink_pattern,
         "ramp_up_seconds": data.ramp_up_seconds,
+        "items": items,
         "left": _nav_button("<", ScreenId.AGENDA),
         "right": _nav_button(">", ScreenId.SETTINGS),
     }

@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import re
 import html
+from urllib.parse import unquote
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -142,54 +143,87 @@ def _parse_datetime(value: str, params: dict[str, str]) -> datetime | None:
 
 
 def _extract_labeled(description: str, labels: tuple[str, ...]) -> str:
-    for regel in description.splitlines():
-        sleutel, scheiding, waarde = regel.partition(":")
-        if scheiding and sleutel.strip().casefold() in {x.casefold() for x in labels}:
-            return waarde.strip()
+    """Lees een gelabelde waarde uit vrije tekst of HTML-resttekst.
+
+    MyX/Xedule kan labels als ``Lokaal:``, ``Locatie(s):`` of ``Room -``
+    gebruiken. We accepteren daarom ``:`` en ``-`` als scheiding en negeren
+    een optioneel ``(s)``-suffix.
+    """
+    wanted = {re.sub(r"[^a-z0-9]", "", label.casefold()) for label in labels}
+    for regel in str(description or "").splitlines():
+        match = re.match(r"^\s*([^:=–—-]{2,40}?)\s*(?::|=|\s[-–—]\s)\s*(.+?)\s*$", regel)
+        if not match:
+            continue
+        key = re.sub(r"[^a-z0-9]", "", match.group(1).casefold())
+        if key in wanted:
+            return match.group(2).strip()
     return ""
 
-def _clean_room_value(value: str) -> str:
-    """Normaliseer lege/placeholder-locaties uit MyX/Xedule.
 
-    Sommige feeds vullen ``LOCATION`` letterlijk met ``-`` of ``—``. In v8
-    werd zo'n teken ten onrechte als een echte locatie gezien, waardoor de
-    parser niet meer in DESCRIPTION/X-ALT-DESC zocht.
-    """
+def _clean_room_value(value: str) -> str:
+    """Normaliseer lege/placeholder-locaties uit MyX/Xedule."""
     value = html.unescape(str(value or ""))
+    # Sommige vendorvelden bevatten URL-encoded tekst.
+    try:
+        value = unquote(value)
+    except Exception:
+        pass
     value = re.sub(r"<br\s*/?>", "\n", value, flags=re.I)
+    value = re.sub(r"</(?:div|p|li|tr|td)>", "\n", value, flags=re.I)
     value = re.sub(r"<[^>]+>", " ", value)
-    value = re.sub(r"\s+", " ", value).strip(" \t\r\n,;")
-    compact = re.sub(r"[\s.]+", "", value).casefold()
-    if compact in {"", "-", "—", "nvt", "geen", "geenlokaal", "onbekend", "tbd"}:
+    value = value.replace("\\n", "\n")
+    value = re.sub(r"[\t\r ]+", " ", value)
+    value = re.sub(r"\n\s*", "\n", value).strip(" \t\r\n,;")
+    compact = re.sub(r"[\s._/\\-]+", "", value).casefold()
+    if compact in {
+        "", "nvt", "geen", "geenlokaal", "geenlocatie", "onbekend",
+        "tbd", "na", "none", "null",
+    }:
+        return ""
+    # Losse streepjes en vergelijkbare placeholders.
+    if re.fullmatch(r"[-–—_.?/\\ ]+", value):
         return ""
     return value
 
 
 def _extract_room_candidates(text: str) -> str:
-    """Zoek lokaalcodes in vrije MyX/Xedule-tekst.
+    """Zoek waarschijnlijke lokaalcodes in vrije MyX/Xedule-tekst.
 
-    De feed zet lokalen niet consequent in ``LOCATION``. In praktijk komen ze
-    ook voor in DESCRIPTION, HTML-fragmenten en vendorvelden. Naast
-    ``LVM-E2.12`` accepteert v9 ook varianten met spaties zoals
-    ``LVM E2.12``. Resultaten worden teruggebracht naar één consistente vorm.
+    Ondersteunt onder andere ``LVM-E2.12``, ``LVM E2.12``, ``E2.14``,
+    ``B1-03`` en optionele letters achter het lokaalnummer. Resultaten blijven
+    bewust conservatief zodat groepscodes en tijden niet als lokaal eindigen.
     """
     text = _clean_room_value(text)
     if not text:
         return ""
 
     found: list[str] = []
-    # Campusprefix + lokaalcodes: LVM-E2.12, LVM E2.12, E2.14, B1.03.
+    # Campusprefix + lokaalcode. Voorbeeld: LVM-E2.12, LVM E2.12A, E2-14.
     pattern = re.compile(
         r"\b(?:(?P<prefix>[A-Z]{2,10})[\s_-]+)?"
-        r"(?P<room>[A-Z]{1,3}\d{1,2}(?:[.-]\d{1,3})+)\b",
+        r"(?P<room>[A-Z]{1,3}\d{1,2}(?:[.-]\d{1,3})+[A-Z]?)\b",
         re.I,
     )
     for match in pattern.finditer(text.upper()):
         prefix = (match.group("prefix") or "").strip()
-        room = match.group("room").strip()
+        room = match.group("room").strip().replace("-", ".")
         candidate = f"{prefix}-{room}" if prefix else room
         if candidate not in found:
             found.append(candidate)
+
+    # Als een expliciet lokaal-/roomlabel aanwezig is, accepteren we ook een
+    # numerieke kamercode zoals ``2.12``. Zonder label zou dat te snel een
+    # datum/versie kunnen zijn.
+    labeled_numeric = re.compile(
+        r"(?i)\b(?:lokaal(?:\(s\)|en)?|locatie(?:\(s\)|s)?|"
+        r"room(?:\(s\)|s)?|ruimte(?:\(s\)|s)?)\s*[:=-]\s*"
+        r"(?P<value>\d{1,2}[.-]\d{1,3}[A-Z]?)\b"
+    )
+    for match in labeled_numeric.finditer(text):
+        candidate = match.group("value").upper().replace("-", ".")
+        if candidate not in found:
+            found.append(candidate)
+
     return " / ".join(found[:4])
 
 
@@ -198,47 +232,81 @@ def _extract_event_room(
     description: str,
     location: str,
 ) -> str:
-    """Vind het echte lokaal, ook als ``LOCATION`` alleen campus/placeholder bevat.
+    """Vind een lokaal uitsluitend wanneer de iCal-data er echt één bevat.
 
-    Xedule/MyX zet de bruikbare lokaalcode niet altijd in ``LOCATION``. Daarom
-    krijgt een herkenbare code (bijv. ``LVM-E2.12``) altijd voorrang, waarna
-    DESCRIPTION, HTML/vendorvelden, COMMENT en RESOURCES worden doorzocht.
-    Alleen als nergens een lokaalcode staat, gebruiken we een betekenisvolle
-    LOCATION-tekst als fallback.
+    Xedule kan het lokaal in ``LOCATION``, ``DESCRIPTION``, ``RESOURCES``,
+    vendorvelden of in propertyparameters zoals ``ATTENDEE;CN=...`` zetten.
+    Een placeholder zoals ``-`` telt nooit als lokaal. Als er nergens bruikbare
+    locatie-informatie staat, geven we een lege string terug zodat de GUI het
+    lokaalblok volledig verbergt in plaats van ``Lokaal: -`` te tonen.
     """
     clean_location = _clean_room_value(location)
     location_candidates = _extract_room_candidates(clean_location)
     if location_candidates:
         return location_candidates
 
-    labeled = _clean_room_value(
-        _extract_labeled(description, ("Lokaal", "Locatie", "Room", "Ruimte"))
+    labels = (
+        "Lokaal", "Lokalen", "Lokaal(s)",
+        "Locatie", "Locaties", "Locatie(s)",
+        "Location", "Locations",
+        "Room", "Rooms", "Room(s)",
+        "Ruimte", "Ruimtes", "Ruimte(s)",
     )
+    labeled = _clean_room_value(_extract_labeled(description, labels))
     labeled_candidates = _extract_room_candidates(labeled)
     if labeled_candidates:
         return labeled_candidates
+    # Een expliciet gelabelde niet-placeholder locatie mag ook gewone tekst zijn.
+    if labeled and len(labeled) <= 80:
+        return labeled
 
     candidates = _extract_room_candidates(description)
     if candidates:
         return candidates
 
-    searchable: list[str] = []
+    # Eerst velden die semantisch het meest waarschijnlijk een ruimte bevatten.
+    preferred_names = (
+        "RESOURCES", "X-ROOM", "X-ROOMS", "X-LOCATION",
+        "X-APPLE-STRUCTURED-LOCATION", "X-MICROSOFT-CDO-LOCATION",
+        "X-ALT-DESC", "COMMENT", "ATTENDEE",
+    )
+    ordered_names = list(preferred_names) + [
+        name for name in event.keys() if name not in preferred_names
+    ]
     skip = {"DTSTART", "DTEND", "DTSTAMP", "UID", "CREATED", "LAST-MODIFIED"}
-    for name, values in event.items():
+
+    searchable: list[str] = []
+    for name in ordered_names:
         if name in skip:
             continue
-        for _params, value in values:
+        for params, value in event.get(name, []):
+            # Kamers worden in sommige exporters als ATTENDEE/RESOURCE met
+            # CN-parameter geschreven, bv. ATTENDEE;CUTYPE=ROOM;CN=LVM-E2.12.
+            param_text = " ".join(
+                f"{key}={param_value}" for key, param_value in params.items()
+            )
             try:
-                searchable.append(_unescape_text(value))
+                decoded = _unescape_text(value)
             except Exception:
-                searchable.append(value)
+                decoded = value
+            searchable.extend((name, param_text, decoded))
+
+            if (
+                name in {"ATTENDEE", "RESOURCES"}
+                or str(params.get("CUTYPE", "")).casefold() in {"room", "resource"}
+                or str(params.get("ROLE", "")).casefold() == "room"
+            ):
+                candidates = _extract_room_candidates(f"{param_text} {decoded}")
+                if candidates:
+                    return candidates
+
     candidates = _extract_room_candidates("\n".join(searchable))
     if candidates:
         return candidates
 
-    # Een campusnaam zoals "LVM" is bruikbare fallback-informatie, maar wordt
-    # pas gebruikt nadat alle velden op een specifiek lokaal zijn gecontroleerd.
-    return clean_location or labeled
+    # Alleen een echte, betekenisvolle LOCATION als fallback gebruiken. Een
+    # algemene campusnaam (zoals LVM) mag getoond worden, maar nooit een dash.
+    return clean_location
 
 
 def parse_ics(text: str) -> list[Lesson]:
@@ -317,6 +385,73 @@ def parse_ics(text: str) -> list[Lesson]:
     return sorted(lessen, key=lambda les: les.start)
 
 
+def inspect_ics_room_hints(text: str) -> dict[str, object]:
+    """Geef een privacyvriendelijke samenvatting van lokaalinformatie in ICS.
+
+    De functie toont geen feed-URL, volledige beschrijvingen, vaknamen of
+    deelnemers. Alleen propertynamen, aantallen en lokaalachtige codes worden
+    teruggegeven. Zo kan op de Raspberry Pi worden vastgesteld of de bronfeed
+    überhaupt lokaalinformatie bevat als de GUI niets toont.
+    """
+    if not isinstance(text, str) or not text.strip():
+        raise ProviderError("Lege ICS-response")
+
+    interesting_names = {
+        "LOCATION", "RESOURCES", "X-ROOM", "X-ROOMS", "X-LOCATION",
+        "X-APPLE-STRUCTURED-LOCATION", "X-MICROSOFT-CDO-LOCATION",
+        "X-ALT-DESC", "COMMENT", "DESCRIPTION", "ATTENDEE",
+    }
+    property_counts: dict[str, int] = {}
+    room_candidates: list[str] = []
+    events = 0
+    in_event = False
+
+    for raw in _unfold_ics(text):
+        line = raw.strip("\ufeff")
+        upper = line.upper()
+        if upper == "BEGIN:VEVENT":
+            events += 1
+            in_event = True
+            continue
+        if upper == "END:VEVENT":
+            in_event = False
+            continue
+        if not in_event or not line or ":" not in line:
+            continue
+        try:
+            name, params, value = _split_property(line)
+        except ProviderError:
+            continue
+
+        decoded = _unescape_text(value)
+        param_text = " ".join(f"{k}={v}" for k, v in params.items())
+
+        nonempty_location = name == "LOCATION" and bool(_clean_room_value(decoded))
+        is_room_resource = (
+            name in {"ATTENDEE", "RESOURCES"}
+            and (
+                str(params.get("CUTYPE", "")).casefold() in {"room", "resource"}
+                or "room" in param_text.casefold()
+            )
+        )
+        candidate = _extract_room_candidates(f"{param_text} {decoded}")
+
+        if name in interesting_names and (candidate or nonempty_location or is_room_resource):
+            property_counts[name] = property_counts.get(name, 0) + 1
+
+        if candidate:
+            for item in (part.strip() for part in candidate.split("/")):
+                if item and item not in room_candidates:
+                    room_candidates.append(item)
+
+    return {
+        "events": events,
+        "room_property_counts": dict(sorted(property_counts.items())),
+        "room_candidates": room_candidates[:20],
+        "source_has_room_hints": bool(property_counts or room_candidates),
+    }
+
+
 class MyXAgendaProvider:
     """MyX/Xedule-adapter.
 
@@ -367,8 +502,8 @@ class MyXAgendaProvider:
             )
         return config
 
-    def fetch_range(self, start: date, end_exclusive: date) -> list[Lesson]:
-        """Haal ``start <= dag < end_exclusive`` op via InternetCalendar."""
+    def fetch_raw_ics(self, start: date, end_exclusive: date) -> str:
+        """Download de ruwe ICS voor diagnose zonder de feed-URL te loggen."""
         config = self._require_config()
         if end_exclusive <= start:
             raise ProviderError("MyX-datumbereik moet minimaal één dag bevatten")
@@ -380,7 +515,7 @@ class MyXAgendaProvider:
             url = config.feed_url
             headers = {
                 "Accept": "text/calendar, text/plain;q=0.9, */*;q=0.1",
-                "User-Agent": "WakeSync/0.3",
+                "User-Agent": "WakeSync/10.0.0",
             }
         else:
             query = urllib.parse.urlencode(
@@ -394,7 +529,7 @@ class MyXAgendaProvider:
             headers = {
                 "Authorization": f"Bearer {config.bearer_token}",
                 "Accept": "text/calendar, text/plain;q=0.9, */*;q=0.1",
-                "User-Agent": "WakeSync/0.3",
+                "User-Agent": "WakeSync/10.0.0",
             }
 
         request = urllib.request.Request(url, headers=headers, method="GET")
@@ -417,10 +552,13 @@ class MyXAgendaProvider:
             raise ProviderError(f"MyX API niet bereikbaar: {type(exc).__name__}") from exc
 
         try:
-            text = payload.decode(charset)
+            return payload.decode(charset)
         except (LookupError, UnicodeDecodeError) as exc:
             raise ProviderError("MyX ICS-response heeft ongeldige tekstcodering") from exc
 
+    def fetch_range(self, start: date, end_exclusive: date) -> list[Lesson]:
+        """Haal ``start <= dag < end_exclusive`` op via InternetCalendar."""
+        text = self.fetch_raw_ics(start, end_exclusive)
         lessen = parse_ics(text)
         # Sommige calendar-servers behandelen 'end' inclusief. Filter daarom
         # altijd zelf op het gevraagde half-open bereik.

@@ -12,6 +12,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from datetime import date, timedelta
 from pathlib import Path
 import sys
 
@@ -402,6 +403,65 @@ def _run_healthcheck(settings_path: str) -> int:
         return 1
 
 
+
+def _run_inspect_myx(settings_path: str, days: int) -> int:
+    """Controleer de werkelijk gekoppelde MyX-feed zonder de geheime URL te tonen.
+
+    Dit commando is bedoeld voor fysieke diagnose op de Raspberry Pi. Het haalt
+    de feed op via dezelfde credential/feed-store als WakeSync zelf en print
+    alleen lesmetadata. Device keys, feed-URL en andere geheimen worden nooit
+    naar stdout geschreven.
+    """
+    try:
+        store = JsonStore(settings_path)
+        settings = load_settings(store)
+        clock = SystemClock(settings.locale.timezone)
+        manager = MyXAuthManager()
+        from wekker.agenda.myx import MyXAgendaProvider, inspect_ics_room_hints, parse_ics
+
+        provider = MyXAgendaProvider(config_loader=manager.ensure_config)
+        start = clock.now().date()
+        end = start + timedelta(days=max(1, min(int(days), 60)))
+        raw_ics = provider.fetch_raw_ics(start, end)
+        lessons = [
+            lesson
+            for lesson in parse_ics(raw_ics)
+            if start <= lesson.start.date() < end
+        ]
+        raw_room_hints = inspect_ics_room_hints(raw_ics)
+        rows = [
+            {
+                "start": lesson.start.isoformat(),
+                "end": lesson.end.isoformat(),
+                "subject": lesson.subject,
+                "teacher": lesson.teacher or "",
+                "room": lesson.room or "",
+            }
+            for lesson in lessons
+        ]
+        with_room = sum(1 for row in rows if row["room"])
+        payload = {
+            "ok": True,
+            "period_start": start.isoformat(),
+            "period_end_exclusive": end.isoformat(),
+            "lessons": len(rows),
+            "lessons_with_room": with_room,
+            "room_available": bool(with_room),
+            "raw_room_hints": raw_room_hints,
+            "items": rows,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    except Exception as exc:
+        print(
+            json.dumps(
+                {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                ensure_ascii=False,
+            )
+        )
+        return 1
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="WakeSync slimme schoolwekker")
     sub = parser.add_subparsers(dest="command")
@@ -424,6 +484,12 @@ def main(argv: list[str] | None = None) -> None:
     health_p = sub.add_parser("healthcheck", help="lokale update-healthcheck")
     health_p.add_argument("--settings", default="wekker-settings.json")
 
+    inspect_p = sub.add_parser(
+        "inspect-myx",
+        help="controleer de gekoppelde MyX-feed zonder geheime URL te tonen",
+    )
+    inspect_p.add_argument("--settings", default="wekker-settings.json")
+    inspect_p.add_argument("--days", type=int, default=21)
 
     args = parser.parse_args(argv)
     setup_logging()
@@ -436,6 +502,8 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "healthcheck":
         raise SystemExit(_run_healthcheck(args.settings))
+    if args.command == "inspect-myx":
+        raise SystemExit(_run_inspect_myx(args.settings, args.days))
     parser.print_help()
 
 
