@@ -38,9 +38,11 @@ def test_navigator_links_rechts_met_wrap():
     nav = Navigator()
     assert nav.current is ScreenId.MAIN
     assert nav.go_right() is ScreenId.AGENDA
+    assert nav.go_right() is ScreenId.ALARM
     assert nav.go_right() is ScreenId.SETTINGS
     assert nav.go_right() is ScreenId.MAIN  # wrap
     assert nav.go_left() is ScreenId.SETTINGS
+    assert nav.go_left() is ScreenId.ALARM
     assert nav.go_left() is ScreenId.AGENDA
     assert nav.go_left() is ScreenId.MAIN
 
@@ -111,6 +113,8 @@ def test_layout_for_volgt_navigator():
     layout = layout_for(nav, data)
     assert layout["screen"] == "agenda"
     assert layout["title"] == "OSIRIS"
+    nav.go_right()
+    assert layout_for(nav, data)["screen"] == "alarm"
     nav.go_right()
     assert layout_for(nav, data)["screen"] == "settings"
 

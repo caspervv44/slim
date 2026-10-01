@@ -1,42 +1,49 @@
-# WakeSync v8
+# WakeSync v9
 
-WakeSync is een Raspberry Pi 5-schoolwekker voor een 5-inch touchscreen. De
-app combineert een fysieke wekkerinterface, MyX/iCalendar-rooster, online
-beheer via `veendomain.nl` en een veilige software-updater.
+WakeSync is een Raspberry Pi 5-schoolwekker met een 5-inch 800×480-interface,
+MyX/iCalendar-rooster, online beheer via `veendomain.nl` en een veilige
+software-updater.
 
-## Wat v8 verandert
+## Wat v9 verandert
 
-V8 voert de goedgekeurde eerste bouwscope uit: **A1–A7 + B1–B6**, aangevuld
-met de beperkte diagnose uit C4.
+- Het goedgekeurde **C9-logo** is de vaste WakeSync-branding in de GUI,
+  opstartweergave, slaapmodus en online beheer.
+- De automatische touch-displaycheck is uit de product-GUI en diagnose
+  verwijderd. De huidige ADS7846-touchbediening werkt op de echte testopstelling
+  nog niet betrouwbaar en wordt daarom niet als werkend gepresenteerd.
+- De hoofdnavigatie heeft nu vier vaste tabs:
+  **Vandaag · Agenda · Alarm · Instellingen**.
+- Het nieuwe **Alarm**-scherm heeft een 360° uur/minuutkiezer plus snooze,
+  volume, speaker- en lampinstellingen.
+- De agenda toont maximaal zes lessen per pagina. Daardoor blijft een normale
+  volledige schooldag, inclusief een laatste les van 15:30–17:00, zichtbaar
+  zonder dat die ongemerkt op een tweede pagina verdwijnt.
+- De MyX/Xedule-lokaalparser behandelt `LOCATION:-` en `LOCATION:—` als
+  lege placeholders en zoekt daarna verder in `DESCRIPTION`, `X-ALT-DESC`,
+  `COMMENT`, `RESOURCES` en vendorvelden.
+- De slaapmodus heeft instelbare professionele effecten:
+  **uit**, **zachte gloed**, **pulserende gloed** en **aurora**.
+  De gloedsterkte is instelbaar van 0–100%.
+- `test2.pl` heeft een responsieve beheerinterface:
+  op desktop een vaste zijbalk, op telefoon horizontale tabnavigatie.
+  De hoofdonderdelen zijn Alarm, Weergave, Rooster en Systeem.
+- WakeSync gebruikt voor de klok altijd de lokale Raspberry Pi-systeemtijd en
+  ingestelde tijdzone. Een internetverbinding is niet nodig om de tijd tijdens
+  normaal bedrijf te laten doorlopen.
+- De v8-updater, rollback, persistente alarmstatus, agenda-cache en cloudrevision
+  blijven behouden.
 
-- Waveshare 5-inch/ADS7846-profiel met detectie, backup, labwc-outputmapping
-  en controle na herstart.
-- Updater met stabiele GitHub Releases, operatiejournal, rollback en
-  app-healthcheck vóór acceptatie.
-- Online beheer (`test2.pl`) toont na een anonieme POST geen instellingen.
-- Agenda-HTTP en MyX-feedverwerking draaien buiten de alarm-/GUI-thread.
-- Rooster én runtime-alarmstatus worden lokaal persistent opgeslagen.
-- Snooze/dismiss blijven correct na een herstart; een gemist alarm wordt
-  alleen binnen 10 minuten hersteld en anders als melding getoond.
-- Instellingen worden eerst atomair opgeslagen en daarna live toegepast.
-- Alarmtransities committen pas na succesvolle hardwareactie.
-- Hoofdscherm toont huidige/volgende les met een vaste, grote lokaalweergave.
-- De volledige dagagenda is bereikbaar via paginering; 6–12 lessen worden
-  niet meer afgekapt.
-- Apart alarm-/snoozescherm met grote snoozeknop; stoppen blijft via de
-  fysieke productknop.
-- Eerlijke roosterstatus: `Nog niet geladen`, `Bijgewerkt om …` of
-  `Eerder rooster getoond`.
-- Instellingen zijn verdeeld in Weergave, Online beheer, Software,
-  Touchscreen & beeld en Diagnose.
-- Diagnose toont versie, syncstatus, NTP, display/touch en backlightstatus
-  zonder device-key, wachtwoord of geheime MyX-feed te exporteren.
+## Belangrijk over tijd zonder internet
 
-C1 (school/vakantieprofielen), C2 (wekken vanaf eerste les), echte
-speaker/lampdrivers en proces/watchdog-herstel zijn bewust nog niet onderdeel
-van deze versie.
+WakeSync haalt de actuele kloktijd niet uit de cloud. De GUI gebruikt direct de
+Raspberry Pi-systeemklok via de ingestelde `zoneinfo`-tijdzone. Als wifi
+wegvalt, blijven tijd, alarm en lokaal opgeslagen agenda dus werken.
 
-## Installatie / upgrade vanaf v7
+Dit is iets anders dan tijd bewaren wanneer de Pi volledig spanningsloos is.
+Daarvoor is de Raspberry Pi 5-RTC en, indien tijdbehoud tijdens volledige
+stroomuitval nodig is, een passende RTC-batterij/configuratie bepalend.
+
+## Installatie / upgrade
 
 ```bash
 cd ~/slim
@@ -52,88 +59,83 @@ via:
 
 `https://veendomain.nl/klok/test2.pl`
 
-Plaats voor v8 ook `deploy/cloud/test2.pl` op de WAMP-server. De health-URL:
+Plaats voor v9 ook `deploy/cloud/test2.pl` op de WAMP-server. De health-URL:
 
 `https://veendomain.nl/klok/test2.pl?health=1`
 
-moet `service: "wakesync"` en `version: 8` melden.
+moet `service: "wakesync"` en `version: 9` melden.
+
+## Online beheer
+
+De beheerpagina is responsive:
+
+- **desktop:** zijbalk met tabbladen;
+- **telefoon:** horizontaal scrollbare tabbladen;
+- **Alarm:** alarmtijd, snooze, volume en geplande lamp/speakeropties;
+- **Weergave:** thema, tijdzone, tijdsnotatie, slaapmodus en gloed;
+- **Rooster:** provider, synchronisatie en MyX/iCalendar-feed;
+- **Systeem:** status, beveiliging en wachtwoordbeheer.
+
+Openbare uitleg op de loginpagina beschrijft welke onderdelen configureerbaar
+zijn zonder privé-instellingen van een wekker prijs te geven.
+
+## Agenda en lokalen
+
+De parser ondersteunt onder andere deze Xedule-vormen:
+
+```text
+LOCATION:-
+DESCRIPTION:... LVM-E2.12 / E2.14 - LVM ...
+```
+
+en:
+
+```text
+LOCATION:—
+X-ALT-DESC;FMTTYPE=text/html:<div>... LVM E3.07 - LVM ...</div>
+```
+
+In beide gevallen wordt het lokaal uit de beschrijving gehaald en doorgegeven
+aan zowel **Vandaag** als **Agenda**.
 
 ## Touchscreen
 
-Bekend profiel:
+WakeSync v9 voert geen automatische touchcheck of automatische touchreparatie
+meer uit in de productsoftware. De ADS7846-controller kan door Linux zichtbaar
+zijn terwijl de grafische bediening nog niet werkt. Dit hardware/Wayland-
+probleem wordt apart onderzocht zodat de app geen misleidende status toont.
 
-- Waveshare 5-inch HDMI LCD
-- 800×480
-- ADS7846 Touchscreen
-- Raspberry Pi OS Wayland/labwc
-- verwachte actieve Wayland-output: `HDMI-A-1`
-
-Status bekijken:
-
-```bash
-python -m wekker touch-setup --status
-```
-
-Als ADS7846 al door Linux wordt gezien, corrigeert WakeSync alleen de
-gebruikersmapping in `~/.config/labwc/rc.xml` en laat bootconfig met rust.
-
-Op een schone installatie waar ADS7846 nog niet wordt gezien, moet het profiel
-expliciet worden bevestigd:
-
-```bash
-sudo .venv/bin/python -m wekker touch-setup \
-  --profile waveshare-5-hdmi-ads7846 \
-  --confirmed \
-  --home "$HOME"
-sudo reboot
-```
-
-Na de reboot:
-
-```bash
-python -m wekker touch-setup --verify
-```
-
-**Belangrijk:** de boot-overlay is alleen voor dit bevestigde hardwareprofiel.
-Gebruik hem niet voor een ander Waveshare-model.
+Er is geen touch-check meer beschikbaar via de product-GUI of product-CLI. De bestaande helpercode wordt alleen intern bewaard voor later handmatig onderzoek.
 
 ## Updater
 
-De GUI-pagina **Instellingen → Software** installeert standaard alleen een
-gepubliceerde, niet-prerelease GitHub Release uit `caspervv44/slim`.
-
-Een bewegende `main`/`master`-branch wordt niet stil als productie-update
-gebruikt. Alleen voor ontwikkeling kan dit expliciet:
-
-```bash
-export WAKESYNC_UPDATE_ALLOW_BRANCH=1
-```
+**Instellingen → Software** installeert standaard alleen een gepubliceerde,
+niet-prerelease GitHub Release uit `caspervv44/slim`.
 
 De updater:
 
-1. downloadt en valideert het ZIP-archief;
-2. controleert de projectversie en optioneel SHA-256;
-3. maakt een volledige backup van de te vervangen broncode;
-4. journaled iedere target vóór de eerste wijziging;
-5. installeert de nieuwe versie;
+1. downloadt de release via HTTPS;
+2. controleert versie en optioneel SHA-256;
+3. maakt een back-up;
+4. houdt een operatiejournal bij;
+5. installeert de nieuwe broncode;
 6. voert `python -m wekker healthcheck` uit;
-7. start WakeSync pas daarna opnieuw;
-8. rolt bij een fout de aangeraakte targets terug.
+7. start pas na succesvolle controle opnieuw;
+8. rolt bij fouten terug naar de vorige broncode.
 
-Lokale settings, cloudidentiteit, MyX-authdata, agenda-cache, alarmstatus,
-`.git` en `.venv` vallen buiten de vervangtargets.
+De app-updater flasht geen Raspberry Pi OS, kernel of EEPROM.
 
 ## Lokale bestanden
 
-Naast `wekker-settings.json` kan WakeSync o.a. deze sidecars gebruiken:
+Naast `wekker-settings.json` kan WakeSync onder andere gebruiken:
 
 - `.wekker-cloud.json` — apparaatidentiteit en cloudrevision;
-- `.wakesync-agenda-cache.json` — laatste bekende rooster;
-- `.wakesync-alarm.json` — snooze/dismiss/triggerstatus;
+- `.wakesync-agenda-cache.json` — laatste bekende agenda;
+- `.wakesync-alarm.json` — alarm/snooze/dismissstatus;
 - `wakesync-update.log` — updaterlog;
 - `.wakesync-update-status.json` — laatste updaterstatus.
 
-Deze bestanden mogen niet in een publieke repository terechtkomen.
+Zet deze runtimebestanden niet in een publieke repository.
 
 ## Testen
 
@@ -143,13 +145,12 @@ python -m pytest -q
 perl -c deploy/cloud/test2.pl
 ```
 
-De v8-tests dekken onder andere blokkend netwerkwerk, persistente
-alarm/agenda-status, driverfouten, touchmapping, 12-lessenpaginering,
-anonieme CGI-POSTs en rollbackfouten in alle updaterfasen.
+De v9-regressietests dekken onder andere:
 
-## Hardwarestatus
-
-De huidige bekende displayopstelling heeft geen entry onder
-`/sys/class/backlight` en meldt via `ddcutil` dat DDC/CI niet wordt
-ondersteund. Daarom presenteert WakeSync de donkere slaapweergave niet als
-echte hardware-backlightregeling. Zie `docs/hardware-inventory.md`.
+- een dag met vijf lessen waarbij 15:30–17:00 zichtbaar moet blijven;
+- `LOCATION:-`/`—` met lokaal in Xedule-beschrijving;
+- lokaal van ICS-parser tot Vandaag én Agenda;
+- 360° alarmkiezer;
+- slaapgloedinstellingen;
+- offline gebruik van de lokale systeemklok;
+- cloudbeveiliging en updater/rollback uit v8.

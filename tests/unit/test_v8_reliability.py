@@ -351,12 +351,13 @@ def test_volledige_dagagenda_pagineert_12_lessen_zonder_verlies():
             )
         )
 
+    page_count = (len(items) + AGENDA_PAGE_SIZE - 1) // AGENDA_PAGE_SIZE
     pages = [
         build_agenda_data(items, "MyX", page=page, now=start + timedelta(minutes=60))
-        for page in range(3)
+        for page in range(page_count)
     ]
     assert all(len(page.rows) <= AGENDA_PAGE_SIZE for page in pages)
-    assert all(page.page_count == 3 for page in pages)
+    assert all(page.page_count == page_count for page in pages)
     assert [row.subject for page in pages for row in page.rows] == [
         f"Vak {i}" for i in range(1, 13)
     ]
@@ -466,11 +467,6 @@ def test_echte_fysieke_dismiss_wordt_niet_door_klokcorrectie_ongedaan_gemaakt(
 def test_diagnose_export_bevat_geen_geheime_velden(tmp_path: Path, monkeypatch):
     # Maak de test onafhankelijk van de echte hostcommands/hardware.
     monkeypatch.setattr("wekker.diagnostics._command", lambda *args, **kwargs: "")
-    monkeypatch.setattr(
-        "wekker.diagnostics.TouchConfigurator.detect",
-        lambda self: SimpleNamespace(to_dict=lambda: {"configured": True}),
-    )
-
     target = export_diagnostics(tmp_path / "diagnose.json")
     raw = target.read_text(encoding="utf-8").lower()
 

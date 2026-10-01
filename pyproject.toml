@@ -1,6 +1,6 @@
 [project]
 name = "wekker"
-version = "8.0.0"
+version = "9.0.0"
 description = "WakeSync slimme fysieke schoolwekker — Raspberry Pi 5 software"
 readme = "README.md"
 requires-python = ">=3.11"

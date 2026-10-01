@@ -14,7 +14,6 @@ import subprocess
 from typing import Any
 
 from wekker import __version__
-from wekker.touch_setup import TouchConfigurator
 
 
 @dataclass(frozen=True)
@@ -27,7 +26,6 @@ class DiagnosticSnapshot:
     agenda_last_success: str
     agenda_last_attempt: str
     cloud_status: str
-    touch: dict[str, Any]
     display_session: str
     display_name: str
     backlight: str
@@ -106,11 +104,6 @@ def collect_diagnostics(runtime: Any | None = None) -> DiagnosticSnapshot:
             except Exception:
                 cloud_status = "fout"
 
-    try:
-        touch = TouchConfigurator().detect().to_dict()
-    except Exception as exc:
-        touch = {"configured": False, "message": f"diagnosefout: {type(exc).__name__}"}
-
     output = _command(["wlr-randr"])
     first_output = ""
     for line in output.splitlines():
@@ -127,7 +120,6 @@ def collect_diagnostics(runtime: Any | None = None) -> DiagnosticSnapshot:
         agenda_last_success=last_success,
         agenda_last_attempt=last_attempt,
         cloud_status=cloud_status,
-        touch=touch,
         display_session=os.environ.get("XDG_SESSION_TYPE", "onbekend"),
         display_name=first_output or os.environ.get("WAYLAND_DISPLAY", "onbekend"),
         backlight=_backlight_status(),

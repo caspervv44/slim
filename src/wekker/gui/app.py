@@ -1,4 +1,4 @@
-"""WakeSync v8 fullscreen touchscreen-app voor 800×480 Raspberry Pi.
+"""WakeSync v9 fullscreen touchscreen-app voor 800×480 Raspberry Pi.
 
 De renderer blijft bewust Tkinter. Netwerk- en hardwaredetectietaken lopen op
 achtergrondthreads; widgets worden alleen op de Tk-hoofdthread gewijzigd.
@@ -7,6 +7,7 @@ achtergrondthreads; widgets worden alleen op de Tk-hoofdthread gewijzigd.
 from __future__ import annotations
 
 from datetime import date, timedelta
+import math
 import logging
 import os
 from pathlib import Path
@@ -21,6 +22,7 @@ from wekker.gui.screens import (
     SCREEN_WIDTH,
     DUTCH_MONTHS,
     DUTCH_WEEKDAYS,
+    AlarmScreenData,
     GuiData,
     Navigator,
     ScreenId,
@@ -79,6 +81,13 @@ SLEEP_VIEW_CHOICES = (
     ("logo_time", "Logo + tijd"),
     ("logo_time_date", "Logo + tijd + datum"),
 )
+SLEEP_EFFECT_CHOICES = (
+    ("off", "Geen effect"),
+    ("soft_glow", "Zachte gloed"),
+    ("pulse_glow", "Pulserende gloed"),
+    ("aurora", "Aurora"),
+)
+SLEEP_GLOW_LEVELS = (0, 25, 50, 65, 75, 100)
 TIMEZONE_CHOICES = (
     ("Europe/Amsterdam", "Amsterdam · CET/CEST"),
     ("Europe/Brussels", "Brussel · CET/CEST"),
@@ -154,6 +163,18 @@ def build_gui_data(
             loaded=selected_loaded,
             status_text=agenda_status,
         ),
+        alarm=AlarmScreenData(
+            time=ctx.settings.alarm.time,
+            enabled=ctx.settings.alarm.enabled,
+            snooze_minutes=ctx.settings.alarm.snooze_minutes,
+            sound=ctx.settings.alarm.sound,
+            volume=ctx.settings.alarm.volume,
+            speaker_enabled=ctx.settings.alarm.speaker_enabled,
+            lamp_brightness=ctx.settings.alarm.lamp_brightness,
+            lamp_blink=ctx.settings.alarm.lamp_blink,
+            blink_pattern=ctx.settings.alarm.blink_pattern,
+            ramp_up_seconds=ctx.settings.alarm.ramp_up_seconds,
+        ),
         settings=SettingsScreenData(
             timezone=ctx.settings.locale.timezone,
             time_format=ctx.settings.locale.time_format,
@@ -161,6 +182,8 @@ def build_gui_data(
             theme=ctx.settings.display.theme,
             sleep_after_seconds=ctx.settings.display.sleep_after_seconds,
             sleep_view=ctx.settings.display.sleep_view,
+            sleep_effect=ctx.settings.display.sleep_effect,
+            sleep_glow_intensity=ctx.settings.display.sleep_glow_intensity,
             provider=ctx.settings.agenda.provider,
             **_cloud_screen_kwargs(ctx),
         ),
@@ -212,6 +235,9 @@ class TouchApp:
         self._update_info: Any | None = None
         self._toast: Any | None = None
         self._last_activity = time.monotonic()
+        self._sleep_animation_job: str | None = None
+        self._sleep_phase = 0.0
+        self._alarm_picker_mode = "hour"
 
         try:
             self._active_theme = str(runtime.ctx.settings.display.theme)
@@ -236,7 +262,6 @@ class TouchApp:
             pass
 
         self.render()
-        self._auto_touch_fix_async()
 
     def _tk(self) -> Any:
         import tkinter as tk
@@ -307,6 +332,8 @@ class TouchApp:
             self._update_main(layout)
         elif layout["screen"] == ScreenId.AGENDA.value:
             self._update_agenda(layout)
+        elif layout["screen"] == ScreenId.ALARM.value:
+            self._update_alarm_screen(layout)
         else:
             self._update_settings(layout)
         return layout
@@ -321,19 +348,38 @@ class TouchApp:
             self._build_main(layout)
         elif self._screen == ScreenId.AGENDA.value:
             self._build_agenda(layout)
+        elif self._screen == ScreenId.ALARM.value:
+            self._build_alarm_screen(layout)
         else:
             self._build_settings(layout)
+
+    def _brand_photo(self, max_size: tuple[int, int] = (112, 43)) -> Any | None:
+        """Laad het goedgekeurde C9-logo passend bij het actieve thema."""
+        try:
+            from PIL import Image, ImageTk
+            name = "wakesync-logo.png" if self._active_theme == "light" else "wakesync-logo-dark.png"
+            path = Path(__file__).resolve().parents[1] / "assets" / name
+            image = Image.open(path).convert("RGBA")
+            image.thumbnail(max_size, Image.Resampling.LANCZOS)
+            return ImageTk.PhotoImage(image)
+        except Exception:
+            return None
 
     def _top_title(self, title: str, subtitle: str = "") -> None:
         tk = self._tk()
         top = tk.Frame(self._frame, bg=BG)
-        top.pack(fill="x", padx=24, pady=(11, 3))
+        top.pack(fill="x", padx=24, pady=(9, 2))
         tk.Label(
             top, text=title, font=("DejaVu Sans", 22, "bold"), fg=TEXT, bg=BG,
         ).pack(side="left")
+        photo = self._brand_photo()
+        if photo is not None:
+            logo = tk.Label(top, image=photo, bg=BG, bd=0)
+            logo.pack(side="right", padx=(12, 0))
+            self._widgets["_brand_header_photo"] = photo
         if subtitle:
             tk.Label(
-                top, text=subtitle, font=("DejaVu Sans", 10), fg=MUTED, bg=BG,
+                top, text=subtitle, font=("DejaVu Sans", 9), fg=MUTED, bg=BG,
             ).pack(side="right", pady=(7, 0))
 
     # ------------------------------------------------------------------
@@ -532,10 +578,10 @@ class TouchApp:
                 font=("DejaVu Sans", 12, "bold"), fg=ACCENT if not row.get("current") else TEXT,
                 bg=row_bg, width=13, anchor="w",
             )
-            time_label.pack(side="left", padx=(11, 4), pady=7)
+            time_label.pack(side="left", padx=(9, 4), pady=4)
 
             info = tk.Frame(card, bg=row_bg)
-            info.pack(side="left", fill="both", expand=True, pady=4)
+            info.pack(side="left", fill="both", expand=True, pady=2)
             subject = tk.Label(
                 info, text=_short(row["subject"], 38),
                 font=("DejaVu Sans", 12, "bold"), fg=TEXT, bg=row_bg,
@@ -556,7 +602,7 @@ class TouchApp:
             room = tk.Label(
                 card, text=f'LOKAAL\n{_short(row.get("room") or "—", 16)}',
                 font=("DejaVu Sans", 9, "bold"), fg=TEXT, bg=CARD,
-                padx=9, pady=4, width=14, justify="center",
+                padx=8, pady=3, width=14, justify="center",
             )
             room.pack(side="right", padx=8)
 
@@ -626,6 +672,336 @@ class TouchApp:
         self.render()
 
     # ------------------------------------------------------------------
+    # Alarm instellen met 360° klokkeuze
+    @staticmethod
+    def _split_alarm_time(value: str) -> tuple[int, int]:
+        try:
+            hour_text, minute_text = value.split(":", 1)
+            return int(hour_text) % 24, int(minute_text) % 60
+        except Exception:
+            return 7, 30
+
+    def _build_alarm_screen(self, layout: dict) -> None:
+        tk = self._tk()
+        self._top_title("Alarm", "360° tijdkiezer")
+        self._render_nav()
+
+        body_frame = tk.Frame(self._frame, bg=BG)
+        body_frame.pack(fill="both", expand=True, padx=20, pady=(2, 2))
+
+        left = tk.Frame(body_frame, bg=CARD)
+        left.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        right = tk.Frame(body_frame, bg=CARD)
+        right.pack(side="left", fill="both", expand=True, padx=(5, 0))
+
+        mode_bar = tk.Frame(left, bg=CARD)
+        mode_bar.pack(fill="x", padx=12, pady=(8, 0))
+        hour_btn = tk.Button(
+            mode_bar, text="Uren", font=("DejaVu Sans", 9, "bold"),
+            fg=TEXT, bg=ACCENT_DARK, bd=0, padx=12, pady=4,
+            command=lambda: self._set_alarm_picker_mode("hour"),
+        )
+        hour_btn.pack(side="left", expand=True, fill="x", padx=(0, 3))
+        minute_btn = tk.Button(
+            mode_bar, text="Minuten", font=("DejaVu Sans", 9, "bold"),
+            fg=TEXT, bg=CARD_ALT, bd=0, padx=12, pady=4,
+            command=lambda: self._set_alarm_picker_mode("minute"),
+        )
+        minute_btn.pack(side="left", expand=True, fill="x", padx=(3, 0))
+
+        canvas = tk.Canvas(
+            left, width=286, height=258, bg=CARD, highlightthickness=0, bd=0
+        )
+        canvas.pack(padx=6, pady=(0, 4))
+        canvas.bind("<Button-1>", self._alarm_dial_click)
+
+        config = tk.Frame(right, bg=CARD)
+        config.pack(fill="both", expand=True, padx=12, pady=9)
+
+        enabled = tk.Button(
+            config, text="", font=("DejaVu Sans", 10, "bold"),
+            fg=TEXT, bg=ACCENT_DARK, activebackground=ACCENT,
+            activeforeground=TEXT, bd=0, padx=10, pady=7,
+            command=self._toggle_alarm_enabled,
+        )
+        enabled.pack(fill="x", pady=(0, 5))
+
+        time_value = tk.Label(
+            config, text=layout["time"], font=("DejaVu Sans", 27, "bold"),
+            fg=ACCENT, bg=CARD,
+        )
+        time_value.pack(pady=(0, 6))
+
+        def compact_row(label_text: str) -> Any:
+            row = tk.Frame(config, bg=CARD_ALT)
+            row.pack(fill="x", pady=2)
+            tk.Label(
+                row, text=label_text, font=("DejaVu Sans", 8, "bold"),
+                fg=MUTED, bg=CARD_ALT, width=13, anchor="w",
+            ).pack(side="left", padx=(8, 4), pady=5)
+            return row
+
+        snooze_row = compact_row("Snooze")
+        snooze = tk.Button(
+            snooze_row, text="", font=("DejaVu Sans", 9, "bold"),
+            fg=TEXT, bg=CARD_ALT, bd=0, padx=8,
+            command=self._cycle_snooze,
+        )
+        snooze.pack(side="right", padx=5)
+
+        volume_row = compact_row("Volume")
+        volume = tk.Label(
+            volume_row, text="", font=("DejaVu Sans", 9, "bold"),
+            fg=TEXT, bg=CARD_ALT, width=6,
+        )
+        volume.pack(side="right", padx=2)
+        tk.Button(
+            volume_row, text="+", font=("DejaVu Sans", 9, "bold"),
+            fg=TEXT, bg=CARD, bd=0, width=3,
+            command=lambda: self._adjust_alarm_value("volume", 10, 0, 100),
+        ).pack(side="right", padx=2, pady=3)
+        tk.Button(
+            volume_row, text="−", font=("DejaVu Sans", 9, "bold"),
+            fg=TEXT, bg=CARD, bd=0, width=3,
+            command=lambda: self._adjust_alarm_value("volume", -10, 0, 100),
+        ).pack(side="right", padx=2, pady=3)
+
+        speaker_row = compact_row("Speaker")
+        speaker = tk.Button(
+            speaker_row, text="", font=("DejaVu Sans", 9, "bold"),
+            fg=TEXT, bg=CARD_ALT, bd=0, padx=8,
+            command=lambda: self._toggle_alarm_bool("speaker_enabled"),
+        )
+        speaker.pack(side="right", padx=5)
+
+        lamp_row = compact_row("Lamp")
+        lamp = tk.Button(
+            lamp_row, text="", font=("DejaVu Sans", 9, "bold"),
+            fg=TEXT, bg=CARD_ALT, bd=0, padx=8,
+            command=lambda: self._toggle_alarm_bool("lamp_blink"),
+        )
+        lamp.pack(side="right", padx=5)
+
+        lamp_power_row = compact_row("Lampsterkte")
+        lamp_power = tk.Label(
+            lamp_power_row, text="", font=("DejaVu Sans", 9, "bold"),
+            fg=TEXT, bg=CARD_ALT, width=6,
+        )
+        lamp_power.pack(side="right", padx=2)
+        tk.Button(
+            lamp_power_row, text="+", font=("DejaVu Sans", 9, "bold"),
+            fg=TEXT, bg=CARD, bd=0, width=3,
+            command=lambda: self._adjust_alarm_value("lamp_brightness", 10, 0, 100),
+        ).pack(side="right", padx=2, pady=3)
+        tk.Button(
+            lamp_power_row, text="−", font=("DejaVu Sans", 9, "bold"),
+            fg=TEXT, bg=CARD, bd=0, width=3,
+            command=lambda: self._adjust_alarm_value("lamp_brightness", -10, 0, 100),
+        ).pack(side="right", padx=2, pady=3)
+
+        effect_row = compact_row("Lampeffect")
+        effect = tk.Button(
+            effect_row, text="", font=("DejaVu Sans", 9, "bold"),
+            fg=TEXT, bg=CARD_ALT, bd=0, padx=8,
+            command=self._cycle_blink_pattern,
+        )
+        effect.pack(side="right", padx=5)
+
+        ramp_row = compact_row("Opbouw")
+        ramp = tk.Button(
+            ramp_row, text="", font=("DejaVu Sans", 9, "bold"),
+            fg=TEXT, bg=CARD_ALT, bd=0, padx=8,
+            command=self._cycle_ramp,
+        )
+        ramp.pack(side="right", padx=5)
+
+        self._widgets.update({
+            "alarm_dial": canvas,
+            "alarm_hour_mode": hour_btn,
+            "alarm_minute_mode": minute_btn,
+            "alarm_enabled": enabled,
+            "alarm_time": time_value,
+            "alarm_snooze": snooze,
+            "alarm_volume": volume,
+            "alarm_speaker": speaker,
+            "alarm_lamp": lamp,
+            "alarm_lamp_brightness": lamp_power,
+            "alarm_effect": effect,
+            "alarm_ramp": ramp,
+        })
+        self._update_alarm_screen(layout)
+
+    def _set_alarm_picker_mode(self, mode: str) -> None:
+        self._alarm_picker_mode = "minute" if mode == "minute" else "hour"
+        layout = layout_for(self._nav, self._data())
+        self._update_alarm_screen(layout)
+
+    @staticmethod
+    def _angle_value(x: float, y: float, cx: float, cy: float, divisions: int) -> int:
+        angle = math.atan2(y - cy, x - cx) + (math.pi / 2)
+        if angle < 0:
+            angle += 2 * math.pi
+        return int(round(angle / (2 * math.pi) * divisions)) % divisions
+
+    def _alarm_dial_click(self, event: Any) -> None:
+        layout = layout_for(self._nav, self._data())
+        hour, minute = self._split_alarm_time(layout.get("time", "07:30"))
+        if self._alarm_picker_mode == "hour":
+            hour = self._angle_value(float(event.x), float(event.y), 143.0, 129.0, 24)
+            self._alarm_picker_mode = "minute"
+        else:
+            minute = self._angle_value(float(event.x), float(event.y), 143.0, 129.0, 60)
+        self._save_alarm_patch({"time": f"{hour:02d}:{minute:02d}"})
+
+    def _draw_alarm_dial(self, layout: dict) -> None:
+        canvas = self._widgets.get("alarm_dial")
+        if canvas is None:
+            return
+        canvas.delete("all")
+        hour, minute = self._split_alarm_time(layout.get("time", "07:30"))
+        cx, cy, radius = 143.0, 129.0, 100.0
+        canvas.create_oval(
+            cx-radius, cy-radius, cx+radius, cy+radius,
+            outline=BORDER, width=3, fill=CARD_ALT,
+        )
+        mode = self._alarm_picker_mode
+        divisions = 24 if mode == "hour" else 60
+        selected = hour if mode == "hour" else minute
+        for i in range(divisions):
+            angle = (i / divisions) * 2 * math.pi - math.pi / 2
+            outer = radius - 4
+            inner = radius - (13 if i % (3 if mode == "hour" else 5) == 0 else 8)
+            x1 = cx + math.cos(angle) * inner
+            y1 = cy + math.sin(angle) * inner
+            x2 = cx + math.cos(angle) * outer
+            y2 = cy + math.sin(angle) * outer
+            canvas.create_line(
+                x1, y1, x2, y2,
+                fill=ACCENT if i == selected else MUTED,
+                width=3 if i == selected else 1,
+            )
+            label_step = 3 if mode == "hour" else 5
+            if i % label_step == 0:
+                lr = radius - 29
+                lx = cx + math.cos(angle) * lr
+                ly = cy + math.sin(angle) * lr
+                canvas.create_text(
+                    lx, ly, text=f"{i:02d}",
+                    fill=TEXT if i == selected else MUTED,
+                    font=("DejaVu Sans", 8, "bold" if i == selected else "normal"),
+                )
+
+        value = selected
+        angle = (value / divisions) * 2 * math.pi - math.pi / 2
+        hand_r = radius - 40
+        hx = cx + math.cos(angle) * hand_r
+        hy = cy + math.sin(angle) * hand_r
+        canvas.create_line(cx, cy, hx, hy, fill=ACCENT, width=5, capstyle="round")
+        canvas.create_oval(cx-7, cy-7, cx+7, cy+7, fill=ACCENT, outline=ACCENT)
+        canvas.create_text(
+            cx, cy+43,
+            text=("UUR" if mode == "hour" else "MINUUT"),
+            fill=MUTED, font=("DejaVu Sans", 8, "bold"),
+        )
+
+        hour_button = self._widgets.get("alarm_hour_mode")
+        minute_button = self._widgets.get("alarm_minute_mode")
+        if hour_button is not None:
+            hour_button.config(bg=ACCENT_DARK if mode == "hour" else CARD_ALT)
+        if minute_button is not None:
+            minute_button.config(bg=ACCENT_DARK if mode == "minute" else CARD_ALT)
+
+    def _save_alarm_patch(self, patch: dict[str, Any]) -> None:
+        try:
+            nieuwe = self._runtime.ctx.settings.update_from_dict({"alarm": patch})
+            from wekker.main import apply_runtime_settings
+            apply_runtime_settings(self._runtime, nieuwe)
+        except Exception as exc:
+            log.exception("alarminstellingen opslaan faalde")
+            self._show_toast(f"Opslaan mislukt: {exc}", error=True)
+            return
+        self._last_activity = time.monotonic()
+        self._show_toast("Alarm opgeslagen")
+        self.render()
+
+    def _toggle_alarm_enabled(self) -> None:
+        current = bool(self._runtime.ctx.settings.alarm.enabled)
+        self._save_alarm_patch({"enabled": not current})
+
+    def _toggle_alarm_bool(self, field: str) -> None:
+        current = bool(getattr(self._runtime.ctx.settings.alarm, field))
+        self._save_alarm_patch({field: not current})
+
+    def _adjust_alarm_value(self, field: str, delta: int, low: int, high: int) -> None:
+        current = int(getattr(self._runtime.ctx.settings.alarm, field))
+        value = max(low, min(high, current + delta))
+        self._save_alarm_patch({field: value})
+
+    def _cycle_snooze(self) -> None:
+        values = [5, 9, 10, 15, 20, 30]
+        current = int(self._runtime.ctx.settings.alarm.snooze_minutes)
+        try:
+            idx = values.index(current)
+        except ValueError:
+            idx = 0
+        self._save_alarm_patch({"snooze_minutes": values[(idx + 1) % len(values)]})
+
+    def _cycle_blink_pattern(self) -> None:
+        values = ["steady", "blink", "pulse"]
+        current = str(self._runtime.ctx.settings.alarm.blink_pattern)
+        try:
+            idx = values.index(current)
+        except ValueError:
+            idx = 0
+        self._save_alarm_patch({"blink_pattern": values[(idx + 1) % len(values)]})
+
+    def _cycle_ramp(self) -> None:
+        values = [0, 15, 30, 60, 120]
+        current = int(self._runtime.ctx.settings.alarm.ramp_up_seconds)
+        try:
+            idx = values.index(current)
+        except ValueError:
+            idx = 0
+        self._save_alarm_patch({"ramp_up_seconds": values[(idx + 1) % len(values)]})
+
+    def _update_alarm_screen(self, layout: dict) -> None:
+        if self._widgets.get("alarm_time") is None:
+            return
+        self._set_text(self._widgets["alarm_time"], layout["time"])
+        self._set_text(
+            self._widgets["alarm_enabled"],
+            "Alarm AAN" if layout.get("enabled") else "Alarm UIT",
+        )
+        self._widgets["alarm_enabled"].config(
+            bg=ACCENT_DARK if layout.get("enabled") else CARD_ALT
+        )
+        self._set_text(
+            self._widgets["alarm_snooze"], f'{layout.get("snooze_minutes", 9)} min'
+        )
+        self._set_text(self._widgets["alarm_volume"], f'{layout.get("volume", 70)}%')
+        self._set_text(
+            self._widgets["alarm_speaker"],
+            "Aan" if layout.get("speaker_enabled") else "Uit",
+        )
+        self._set_text(
+            self._widgets["alarm_lamp"],
+            "Aan" if layout.get("lamp_blink") else "Uit",
+        )
+        self._set_text(
+            self._widgets["alarm_lamp_brightness"],
+            f'{layout.get("lamp_brightness", 100)}%',
+        )
+        patterns = {"steady": "Constant", "blink": "Knipperen", "pulse": "Pulseren"}
+        self._set_text(
+            self._widgets["alarm_effect"],
+            patterns.get(layout.get("blink_pattern"), "Knipperen"),
+        )
+        self._set_text(
+            self._widgets["alarm_ramp"], f'{layout.get("ramp_up_seconds", 30)} sec'
+        )
+        self._draw_alarm_dial(layout)
+
+    # ------------------------------------------------------------------
     # Instellingen per onderwerp
     def _build_settings(self, layout: dict) -> None:
         tk = self._tk()
@@ -639,9 +1015,7 @@ class TouchApp:
             (("Weergave", "Tijd, thema en slaapmodus", lambda: self._show_settings_section("display")),
              ("Online beheer", "QR, login en synchronisatie", lambda: self._show_settings_section("cloud"))),
             (("Software", "Versie en veilige updater", self._show_update_overlay),
-             ("Touchscreen & beeld", "Waveshare-profiel en mapping", lambda: self._show_settings_section("touch"))),
-            (("Diagnose", "Sync, tijd, touch en update-status", lambda: self._show_settings_section("diagnostics")),
-             None),
+             ("Diagnose", "Sync, systeemtijd en update-status", lambda: self._show_settings_section("diagnostics"))),
         ]
         buttons = []
         for pair in rows:
@@ -704,7 +1078,6 @@ class TouchApp:
         titles = {
             "display": "Weergave",
             "cloud": "Online beheer",
-            "touch": "Touchscreen & beeld",
             "diagnostics": "Diagnose",
         }
         tk.Label(
@@ -717,8 +1090,6 @@ class TouchApp:
             self._build_display_section(overlay, layout)
         elif section == "cloud":
             self._build_cloud_section(overlay, layout)
-        elif section == "touch":
-            self._build_touch_section(overlay)
         elif section == "diagnostics":
             self._build_diagnostics_section(overlay)
 
@@ -806,6 +1177,30 @@ class TouchApp:
         view.pack(side="right", padx=(4, 0), pady=6)
         self._widgets["_section_sleep_view"] = view
 
+        effect_card = card("Slaapeffect")
+        effect_labels = [label for _, label in SLEEP_EFFECT_CHOICES]
+        self._sleep_effect_by_label = {label: value for value, label in SLEEP_EFFECT_CHOICES}
+        effect_var = tk.StringVar(
+            value=self._sleep_effect_label(layout.get("sleep_effect", "soft_glow"))
+        )
+        effect_menu = tk.OptionMenu(
+            effect_card, effect_var, *effect_labels, command=self._select_sleep_effect
+        )
+        effect_menu.config(
+            font=("DejaVu Sans", 9, "bold"), fg=TEXT, bg=CARD_ALT,
+            activebackground=ACCENT_DARK, activeforeground=TEXT, bd=0,
+            highlightthickness=0, padx=8, pady=5,
+        )
+        effect_menu.pack(side="right", padx=12, pady=6)
+        intensity = tk.Button(
+            effect_card,
+            text=f'Gloed {int(layout.get("sleep_glow_intensity", 65))}%',
+            font=("DejaVu Sans", 9, "bold"), fg=TEXT, bg=CARD_ALT,
+            bd=0, padx=10, pady=6, command=self._cycle_sleep_intensity,
+        )
+        intensity.pack(side="right", padx=(4, 0), pady=6)
+        self._widgets["_section_sleep_intensity"] = intensity
+
     def _build_cloud_section(self, parent: Any, layout: dict) -> None:
         tk = self._tk()
         body = tk.Frame(parent, bg=CARD)
@@ -880,120 +1275,6 @@ class TouchApp:
         if self._widgets.get("_section_qr_url") != (layout.get("cloud_url") or ""):
             self._refresh_section_qr(layout)
 
-    def _build_touch_section(self, parent: Any) -> None:
-        tk = self._tk()
-        body = tk.Frame(parent, bg=CARD)
-        body.pack(fill="both", expand=True, padx=34, pady=(8, 24))
-        status = tk.Label(
-            body, text="Hardware controleren…",
-            font=("DejaVu Sans", 13, "bold"), fg=TEXT, bg=CARD,
-            justify="left", anchor="w", wraplength=680,
-        )
-        status.pack(fill="x", padx=18, pady=(20, 8))
-        detail = tk.Label(
-            body,
-            text="Ondersteund profiel: Waveshare 5-inch HDMI 800×480 + ADS7846.",
-            font=("DejaVu Sans", 10), fg=MUTED, bg=CARD,
-            justify="left", anchor="w", wraplength=680,
-        )
-        detail.pack(fill="x", padx=18, pady=6)
-        button = tk.Button(
-            body, text="Touchscreen controleren/herstellen",
-            font=("DejaVu Sans", 12, "bold"), fg=TEXT, bg=ACCENT_DARK,
-            activebackground=ACCENT, activeforeground=TEXT, bd=0,
-            padx=16, pady=10, state="disabled",
-        )
-        button.pack(anchor="w", padx=18, pady=(14, 8))
-        self._widgets["_section_touch_status"] = status
-        self._widgets["_section_touch_detail"] = detail
-        self._widgets["_section_touch_button"] = button
-        self._touch_status_async()
-
-    def _touch_status_async(self) -> None:
-        def worker() -> None:
-            try:
-                from wekker.touch_setup import TouchConfigurator
-                status = TouchConfigurator().verify_after_boot()
-            except Exception as exc:
-                self._ui_after(lambda: self._show_touch_error(str(exc)))
-                return
-            self._ui_after(lambda: self._show_touch_status(status))
-        threading.Thread(target=worker, name="wakesync-touch-detect", daemon=True).start()
-
-    def _show_touch_status(self, status: Any) -> None:
-        if self._settings_section != "touch":
-            return
-        label = self._widgets.get("_section_touch_status")
-        detail = self._widgets.get("_section_touch_detail")
-        button = self._widgets.get("_section_touch_button")
-        if label is not None:
-            self._set_text(label, status.message)
-        if detail is not None:
-            self._set_text(
-                detail,
-                f"Touch: {'gevonden' if status.detected_touch else 'niet gevonden'} · "
-                f"Output: {status.output} · "
-                f"800×480: {'ja' if status.output_800x480 else 'niet bevestigd'} · "
-                f"Mapping: {'goed' if status.mapping_ok else 'aanpassen'}",
-            )
-        if button is not None:
-            text = "Configuratie is goed" if status.configured else "Profiel toepassen"
-            button.config(
-                text=text,
-                state=("disabled" if status.configured else "normal"),
-                command=lambda: self._apply_touch_profile_async(status),
-            )
-
-    def _show_touch_error(self, message: str) -> None:
-        label = self._widgets.get("_section_touch_status")
-        if label is not None:
-            self._set_text(label, f"Touchdiagnose mislukt: {message}")
-
-    def _apply_touch_profile_async(self, status: Any) -> None:
-        button = self._widgets.get("_section_touch_button")
-        if button is not None:
-            button.config(text="Configureren…", state="disabled")
-
-        def worker() -> None:
-            try:
-                from wekker.touch_setup import TouchConfigurator
-                manager = TouchConfigurator()
-                if status.detected_touch:
-                    result = manager.apply(confirmed=True)
-                else:
-                    # Bootconfig vereist root. Gebruik dezelfde gebruikers-home
-                    # voor labwc; standaard Raspberry Pi OS heeft sudo voor de
-                    # beheerder. Als dit niet mag, tonen we de exacte fout.
-                    cmd = [
-                        "sudo", "-n", sys.executable, "-m", "wekker", "touch-setup",
-                        "--confirmed", "--home", str(Path.home()),
-                    ]
-                    proc = subprocess.run(
-                        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                        text=True, timeout=30, check=False,
-                    )
-                    if proc.returncode != 0:
-                        raise RuntimeError(proc.stdout.strip() or "sudo kon profiel niet toepassen")
-                    manager = TouchConfigurator()
-                    result = manager.detect()
-            except Exception as exc:
-                self._ui_after(lambda: self._show_touch_error(str(exc)))
-                return
-            self._ui_after(lambda: self._show_touch_status(result))
-
-        threading.Thread(target=worker, name="wakesync-touch-apply", daemon=True).start()
-
-    def _auto_touch_fix_async(self) -> None:
-        def worker() -> None:
-            try:
-                from wekker.touch_setup import TouchConfigurator
-                status = TouchConfigurator().auto_fix_mapping_if_known()
-                if status.configured:
-                    log.info("touchscreenprofiel gecontroleerd: %s", status.output)
-            except Exception:
-                log.exception("automatische touchmappingcontrole faalde")
-        threading.Thread(target=worker, name="wakesync-touch-auto", daemon=True).start()
-
     def _build_diagnostics_section(self, parent: Any) -> None:
         tk = self._tk()
         body = tk.Frame(parent, bg=CARD)
@@ -1022,7 +1303,6 @@ class TouchApp:
                 return
 
             def show() -> None:
-                touch = snapshot.touch
                 lines = [
                     f"WakeSync v{snapshot.version}",
                     f"Tijdzone: {snapshot.timezone}",
@@ -1031,7 +1311,6 @@ class TouchApp:
                     f"Laatste geslaagde sync: {snapshot.agenda_last_success or '—'}",
                     f"Laatste poging: {snapshot.agenda_last_attempt or '—'}",
                     f"Cloud: {snapshot.cloud_status}",
-                    f"Touch: {touch.get('message', 'onbekend')}",
                     f"Display: {snapshot.display_session} · {snapshot.display_name}",
                     f"Backlight: {snapshot.backlight}",
                     f"Updater: {snapshot.update_status}",
@@ -1096,10 +1375,16 @@ class TouchApp:
         overlay.lift()
         self._qr_overlay = overlay
         self._last_activity = time.monotonic()
+        qr_top = tk.Frame(overlay, bg=BG)
+        qr_top.pack(fill="x", padx=28, pady=(9, 5))
+        brand = self._brand_photo((118, 44))
+        if brand is not None:
+            tk.Label(qr_top, image=brand, bg=BG, bd=0).pack(side="left")
+            self._widgets["_overlay_qr_brand"] = brand
         tk.Label(
-            overlay, text="Online beheer", font=("DejaVu Sans", 20, "bold"),
+            qr_top, text="Online beheer", font=("DejaVu Sans", 18, "bold"),
             fg=TEXT, bg=BG,
-        ).pack(pady=(18, 7))
+        ).pack(side="right", pady=(8, 0))
         try:
             import qrcode
             from PIL import ImageTk
@@ -1129,6 +1414,7 @@ class TouchApp:
             except Exception:
                 pass
         self._widgets.pop("_overlay_qr_photo", None)
+        self._widgets.pop("_overlay_qr_brand", None)
 
     # ------------------------------------------------------------------
     # Opslaan + feedback
@@ -1154,6 +1440,10 @@ class TouchApp:
     @staticmethod
     def _sleep_view_label(value: str) -> str:
         return dict(SLEEP_VIEW_CHOICES).get(value, "Logo + tijd + datum")
+
+    @staticmethod
+    def _sleep_effect_label(value: str) -> str:
+        return dict(SLEEP_EFFECT_CHOICES).get(value, "Zachte gloed")
 
     def _show_toast(self, message: str, *, error: bool = False) -> None:
         tk = self._tk()
@@ -1216,6 +1506,24 @@ class TouchApp:
         widget = self._widgets.get("_section_sleep_view")
         if widget is not None:
             self._set_text(widget, self._sleep_view_label(value))
+
+    def _select_sleep_effect(self, label: str) -> None:
+        value = getattr(self, "_sleep_effect_by_label", {}).get(label)
+        if value:
+            self._save_display_patch({"sleep_effect": value})
+
+    def _cycle_sleep_intensity(self) -> None:
+        current = int(self._runtime.ctx.settings.display.sleep_glow_intensity)
+        levels = list(SLEEP_GLOW_LEVELS)
+        try:
+            index = levels.index(current)
+        except ValueError:
+            index = 2
+        value = levels[(index + 1) % len(levels)]
+        self._save_display_patch({"sleep_glow_intensity": value})
+        widget = self._widgets.get("_section_sleep_intensity")
+        if widget is not None:
+            self._set_text(widget, f"Gloed {value}%")
 
     def _select_theme(self, label: str) -> None:
         theme = getattr(self, "_theme_by_label", {}).get(label)
@@ -1397,7 +1705,7 @@ class TouchApp:
         detail = self._widgets.get("_overlay_update_detail")
         button.config(text="Downloaden en controleren…", state="disabled")
         self._set_text(status, "Update wordt voorbereid")
-        self._set_text(detail, "Alarm en touchscreen blijven actief tot de download klaar is.")
+        self._set_text(detail, "Alarm en klok blijven actief tot de download klaar is.")
 
         def worker() -> None:
             try:
@@ -1568,59 +1876,163 @@ class TouchApp:
         elif self._sleeping:
             self._refresh_sleep_content()
 
+    @staticmethod
+    def _blend_hex(background: str, foreground: str, amount: float) -> str:
+        """Meng twee #RRGGBB-kleuren zonder transparante Tk-canvas-trucs."""
+        amount = max(0.0, min(1.0, float(amount)))
+        bg = background.lstrip("#")
+        fg = foreground.lstrip("#")
+        try:
+            br, bgc, bb = (int(bg[i:i+2], 16) for i in (0, 2, 4))
+            fr, fgc, fb = (int(fg[i:i+2], 16) for i in (0, 2, 4))
+        except Exception:
+            return foreground
+        r = round(br + (fr - br) * amount)
+        g = round(bgc + (fgc - bgc) * amount)
+        b = round(bb + (fb - bb) * amount)
+        return f"#{r:02x}{g:02x}{b:02x}"
+
     def _enter_sleep_mode(self) -> None:
         if self._sleeping:
             return
         self._sleeping = True
+        self._sleep_phase = 0.0
         tk = self._tk()
         overlay = tk.Frame(self._root, bg="#030712")
         overlay.place(x=0, y=0, relwidth=1, relheight=1)
         overlay.lift()
         self._sleep_overlay = overlay
 
-        logo_loaded = False
-        try:
-            from PIL import Image, ImageTk
-            logo_path = Path(__file__).resolve().parents[1] / "assets" / "wakesync-logo-dark.png"
-            image = Image.open(logo_path).convert("RGBA")
-            image.thumbnail((330, 155), Image.Resampling.LANCZOS)
-            photo = ImageTk.PhotoImage(image)
-            tk.Label(overlay, image=photo, bg="#030712", bd=0).pack(pady=(38, 0))
+        canvas = tk.Canvas(
+            overlay,
+            width=SCREEN_WIDTH,
+            height=SCREEN_HEIGHT,
+            bg="#030712",
+            highlightthickness=0,
+            bd=0,
+        )
+        canvas.pack(fill="both", expand=True)
+        canvas.bind("<Button-1>", self._on_user_activity)
+        self._widgets["_overlay_sleep_canvas"] = canvas
+
+        # Goedgekeurd C9-logo. Op donkere schermen gebruiken we de variant
+        # met witte 'WAKE'-letters en behouden we de blauwe SYNC-accenten.
+        photo = self._brand_photo((340, 132))
+        if photo is not None:
+            canvas.create_image(
+                SCREEN_WIDTH / 2,
+                148,
+                image=photo,
+                anchor="center",
+                tags=("sleep_content", "sleep_logo"),
+            )
             self._widgets["_overlay_sleep_logo"] = photo
-            logo_loaded = True
-        except Exception:
-            pass
+        else:
+            canvas.create_text(
+                SCREEN_WIDTH / 2,
+                148,
+                text="WAKE\nSYNC",
+                justify="center",
+                fill="#f8fafc",
+                font=("DejaVu Sans", 30, "bold"),
+                tags=("sleep_content",),
+            )
 
-        if not logo_loaded:
-            word = tk.Frame(overlay, bg="#030712")
-            word.pack(pady=(70, 0))
-            tk.Label(
-                word, text="Wake", font=("DejaVu Sans", 30, "bold"),
-                fg="#f8fafc", bg="#030712",
-            ).pack(side="left")
-            tk.Label(
-                word, text="Sync", font=("DejaVu Sans", 30, "bold"),
-                fg="#1677ff", bg="#030712",
-            ).pack(side="left")
-
-        time_label = tk.Label(
-            overlay, text="", font=("DejaVu Sans", 52),
-            fg="#f8fafc", bg="#030712",
+        canvas.create_text(
+            SCREEN_WIDTH / 2,
+            302,
+            text="",
+            fill="#f8fafc",
+            font=("DejaVu Sans", 52, "bold"),
+            tags=("sleep_content", "sleep_time"),
         )
-        date_label = tk.Label(
-            overlay, text="", font=("DejaVu Sans", 14),
-            fg="#8ea2bd", bg="#030712",
+        canvas.create_text(
+            SCREEN_WIDTH / 2,
+            361,
+            text="",
+            fill="#8ea2bd",
+            font=("DejaVu Sans", 14),
+            tags=("sleep_content", "sleep_date"),
         )
-        time_label.pack(pady=(10, 0))
-        date_label.pack(pady=(1, 0))
-        tk.Label(
-            overlay, text="Tik om WakeSync te openen",
-            font=("DejaVu Sans", 9), fg="#526176", bg="#030712",
-        ).pack(side="bottom", pady=(0, 16))
-        self._widgets["_overlay_sleep_time"] = time_label
-        self._widgets["_overlay_sleep_date"] = date_label
-        overlay.bind("<Button-1>", self._on_user_activity)
+        canvas.create_text(
+            SCREEN_WIDTH / 2,
+            453,
+            text="Tik om WakeSync te openen",
+            fill="#526176",
+            font=("DejaVu Sans", 9),
+            tags=("sleep_content",),
+        )
         self._refresh_sleep_content()
+        self._animate_sleep_glow()
+
+    def _animate_sleep_glow(self) -> None:
+        if not self._sleeping:
+            self._sleep_animation_job = None
+            return
+        canvas = self._widgets.get("_overlay_sleep_canvas")
+        if canvas is None:
+            self._sleep_animation_job = None
+            return
+
+        settings = self._runtime.ctx.settings.display
+        effect = str(getattr(settings, "sleep_effect", "soft_glow"))
+        intensity = max(0, min(100, int(getattr(settings, "sleep_glow_intensity", 65))))
+        canvas.delete("sleep_glow")
+        self._sleep_phase = (self._sleep_phase + 0.075) % (2 * math.pi)
+
+        if effect != "off" and intensity > 0:
+            strength = intensity / 100.0
+            cx, cy = SCREEN_WIDTH / 2, 154
+            if effect == "soft_glow":
+                pulse = 0.86 + 0.14 * (math.sin(self._sleep_phase) + 1) / 2
+                specs = [
+                    (190, "#1677ff", 0.20),
+                    (145, "#22d3ee", 0.13),
+                    (108, "#1677ff", 0.09),
+                ]
+                for radius, color, alpha in specs:
+                    mixed = self._blend_hex("#030712", color, alpha * strength * pulse)
+                    canvas.create_oval(
+                        cx-radius, cy-radius*0.62, cx+radius, cy+radius*0.62,
+                        fill=mixed, outline="", tags=("sleep_glow",)
+                    )
+            elif effect == "pulse_glow":
+                pulse = (math.sin(self._sleep_phase * 1.45) + 1) / 2
+                radius = 125 + 48 * pulse
+                for step, color in enumerate(("#1677ff", "#22d3ee", "#4f8cff")):
+                    r = radius + step * 34
+                    alpha = (0.20 - step * 0.045) * strength * (0.55 + 0.45 * pulse)
+                    mixed = self._blend_hex("#030712", color, alpha)
+                    canvas.create_oval(
+                        cx-r, cy-r*0.58, cx+r, cy+r*0.58,
+                        fill=mixed, outline="", tags=("sleep_glow",)
+                    )
+            elif effect == "aurora":
+                offsets = (
+                    (-105, -5, "#1677ff", 178, 92),
+                    (105, 8, "#22d3ee", 170, 88),
+                    (-30, 42, "#6d5dfc", 142, 74),
+                )
+                sway = math.sin(self._sleep_phase) * 24
+                for index, (ox, oy, color, rx, ry) in enumerate(offsets):
+                    x = cx + ox + sway * (1 if index % 2 == 0 else -0.7)
+                    y = cy + oy + math.cos(self._sleep_phase + index) * 8
+                    alpha = (0.15 - index * 0.018) * strength
+                    mixed = self._blend_hex("#030712", color, alpha)
+                    canvas.create_oval(
+                        x-rx, y-ry, x+rx, y+ry,
+                        fill=mixed, outline="", tags=("sleep_glow",)
+                    )
+            try:
+                canvas.tag_lower("sleep_glow")
+            except Exception:
+                pass
+
+        # Rustig genoeg voor een Pi 5 en vloeiend genoeg voor het 5-inch scherm.
+        try:
+            self._sleep_animation_job = self._root.after(80, self._animate_sleep_glow)
+        except Exception:
+            self._sleep_animation_job = None
 
     def _refresh_sleep_content(self) -> None:
         if not self._sleeping:
@@ -1628,27 +2040,34 @@ class TouchApp:
         settings = self._runtime.ctx.settings
         now = self._runtime.ctx.clock.now()
         view = settings.display.sleep_view
-        time_label = self._widgets.get("_overlay_sleep_time")
-        date_label = self._widgets.get("_overlay_sleep_date")
-        if time_label is not None:
-            if view in {"logo_time", "logo_time_date"}:
-                time_label.pack(pady=(10, 0))
-                self._set_text(time_label, format_time(now, settings.locale.time_format))
-            else:
-                time_label.pack_forget()
-        if date_label is not None:
-            if view == "logo_time_date":
-                date_label.pack(pady=(1, 0))
-                self._set_text(
-                    date_label,
-                    f"{DUTCH_WEEKDAYS[now.weekday()]} {now.day} {DUTCH_MONTHS[now.month]}",
-                )
-            else:
-                date_label.pack_forget()
+        canvas = self._widgets.get("_overlay_sleep_canvas")
+        if canvas is None:
+            return
+        show_time = view in {"logo_time", "logo_time_date"}
+        show_date = view == "logo_time_date"
+        canvas.itemconfigure(
+            "sleep_time",
+            text=format_time(now, settings.locale.time_format) if show_time else "",
+            state=("normal" if show_time else "hidden"),
+        )
+        canvas.itemconfigure(
+            "sleep_date",
+            text=(
+                f"{DUTCH_WEEKDAYS[now.weekday()]} {now.day} {DUTCH_MONTHS[now.month]}"
+                if show_date else ""
+            ),
+            state=("normal" if show_date else "hidden"),
+        )
 
     def _wake_from_sleep(self) -> None:
         self._last_activity = time.monotonic()
         self._sleeping = False
+        if self._sleep_animation_job is not None:
+            try:
+                self._root.after_cancel(self._sleep_animation_job)
+            except Exception:
+                pass
+            self._sleep_animation_job = None
         overlay = self._sleep_overlay
         self._sleep_overlay = None
         if overlay is not None:
@@ -1656,7 +2075,10 @@ class TouchApp:
                 overlay.destroy()
             except Exception:
                 pass
-        for key in ("_overlay_sleep_time", "_overlay_sleep_date", "_overlay_sleep_logo"):
+        for key in (
+            "_overlay_sleep_canvas",
+            "_overlay_sleep_logo",
+        ):
             self._widgets.pop(key, None)
 
     # ------------------------------------------------------------------
@@ -1668,11 +2090,12 @@ class TouchApp:
         for screen, label in (
             (ScreenId.MAIN, "Vandaag"),
             (ScreenId.AGENDA, "Agenda"),
+            (ScreenId.ALARM, "Alarm"),
             (ScreenId.SETTINGS, "Instellingen"),
         ):
             active = self._nav.current is screen
             tk.Button(
-                bar, text=label, font=("DejaVu Sans", 11, "bold"),
+                bar, text=label, font=("DejaVu Sans", 10, "bold"),
                 fg=TEXT if active else MUTED,
                 bg=ACCENT_DARK if active else CARD,
                 activebackground=ACCENT, activeforeground=TEXT,
@@ -1713,26 +2136,26 @@ class TouchApp:
 def _show_startup_splash(root: Any) -> None:
     try:
         import tkinter as tk
-        splash = tk.Frame(root, bg="#030712")
+        from PIL import Image, ImageTk
+        splash = tk.Frame(root, bg="#07111f")
         splash.place(x=0, y=0, relwidth=1, relheight=1)
+
+        logo_path = Path(__file__).resolve().parents[1] / "assets" / "wakesync-logo-dark.png"
+        image = Image.open(logo_path).convert("RGBA")
+        image.thumbnail((360, 150), Image.Resampling.LANCZOS)
+        photo = ImageTk.PhotoImage(image)
+        logo = tk.Label(splash, image=photo, bg="#07111f", bd=0)
+        logo.image = photo
+        logo.pack(pady=(115, 0))
+
         tk.Label(
-            splash, text="◷", font=("DejaVu Sans", 56, "bold"),
-            fg="#1677ff", bg="#030712",
-        ).pack(pady=(85, 0))
-        word = tk.Frame(splash, bg="#030712")
-        word.pack()
+            splash, text="WakeSync v9 starten…", font=("DejaVu Sans", 11, "bold"),
+            fg="#8ea2bd", bg="#07111f",
+        ).pack(pady=(16, 0))
         tk.Label(
-            word, text="Wake", font=("DejaVu Sans", 30, "bold"),
-            fg="#f8fafc", bg="#030712",
-        ).pack(side="left")
-        tk.Label(
-            word, text="Sync", font=("DejaVu Sans", 30, "bold"),
-            fg="#1677ff", bg="#030712",
-        ).pack(side="left")
-        tk.Label(
-            splash, text="Opstarten…", font=("DejaVu Sans", 10),
-            fg="#8ea2bd", bg="#030712",
-        ).pack(pady=(10, 0))
+            splash, text="Klok • agenda • alarm • online beheer",
+            font=("DejaVu Sans", 9), fg="#526176", bg="#07111f",
+        ).pack(pady=(7, 0))
         root.update_idletasks()
         root.update()
         time.sleep(0.18)

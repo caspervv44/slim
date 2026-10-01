@@ -9,7 +9,7 @@ import math
 
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 480
-AGENDA_PAGE_SIZE = 4
+AGENDA_PAGE_SIZE = 6
 # Oude naam blijft importeerbaar; de limiet geldt nu per pagina, niet per dag.
 AGENDA_MAX_ROWS = AGENDA_PAGE_SIZE
 
@@ -26,13 +26,14 @@ DUTCH_WEEKDAYS = (
 class ScreenId(str, Enum):
     MAIN = "main"
     AGENDA = "agenda"
+    ALARM = "alarm"
     SETTINGS = "settings"
 
 
 class Navigator:
     def __init__(self, screens: list[ScreenId] | None = None) -> None:
         self._order = list(screens) if screens is not None else [
-            ScreenId.MAIN, ScreenId.AGENDA, ScreenId.SETTINGS,
+            ScreenId.MAIN, ScreenId.AGENDA, ScreenId.ALARM, ScreenId.SETTINGS,
         ]
         if not self._order:
             raise ValueError("Navigator heeft minimaal één scherm nodig")
@@ -135,6 +136,20 @@ class AgendaScreenData:
 
 
 @dataclass(frozen=True)
+class AlarmScreenData:
+    time: str = "07:30"
+    enabled: bool = True
+    snooze_minutes: int = 9
+    sound: str = "beep"
+    volume: int = 70
+    speaker_enabled: bool = True
+    lamp_brightness: int = 100
+    lamp_blink: bool = True
+    blink_pattern: str = "blink"
+    ramp_up_seconds: int = 30
+
+
+@dataclass(frozen=True)
 class SettingsScreenData:
     timezone: str = "Europe/Amsterdam"
     time_format: str = "24h"
@@ -142,6 +157,8 @@ class SettingsScreenData:
     theme: str = "midnight"
     sleep_after_seconds: int = 60
     sleep_view: str = "logo_time_date"
+    sleep_effect: str = "soft_glow"
+    sleep_glow_intensity: int = 65
     provider: str = "mock"
     linked: bool = False
     token_valid: bool = False
@@ -163,6 +180,7 @@ class SettingsScreenData:
 class GuiData:
     main: MainScreenData
     agenda: AgendaScreenData
+    alarm: AlarmScreenData = AlarmScreenData()
     settings: SettingsScreenData = SettingsScreenData()
     notices: tuple[str, ...] = ()
 
@@ -342,6 +360,25 @@ def agenda_layout(data: AgendaScreenData) -> dict:
         "loaded": data.loaded,
         "status_text": data.status_text,
         "left": _nav_button("<", ScreenId.MAIN),
+        "right": _nav_button(">", ScreenId.ALARM),
+    }
+
+
+def alarm_layout(data: AlarmScreenData) -> dict:
+    return {
+        "screen": ScreenId.ALARM.value,
+        "title": "Alarm",
+        "time": data.time,
+        "enabled": data.enabled,
+        "snooze_minutes": data.snooze_minutes,
+        "sound": data.sound,
+        "volume": data.volume,
+        "speaker_enabled": data.speaker_enabled,
+        "lamp_brightness": data.lamp_brightness,
+        "lamp_blink": data.lamp_blink,
+        "blink_pattern": data.blink_pattern,
+        "ramp_up_seconds": data.ramp_up_seconds,
+        "left": _nav_button("<", ScreenId.AGENDA),
         "right": _nav_button(">", ScreenId.SETTINGS),
     }
 
@@ -356,6 +393,8 @@ def settings_layout(data: SettingsScreenData) -> dict:
         "theme": data.theme,
         "sleep_after_seconds": data.sleep_after_seconds,
         "sleep_view": data.sleep_view,
+        "sleep_effect": data.sleep_effect,
+        "sleep_glow_intensity": data.sleep_glow_intensity,
         "cloud_ready": data.cloud_ready,
         "cloud_url": data.cloud_url,
         "cloud_username": data.cloud_username,
@@ -365,7 +404,7 @@ def settings_layout(data: SettingsScreenData) -> dict:
         "cloud_error": data.cloud_error,
         "cloud_revision": data.cloud_revision,
         "cloud_last_sync": data.cloud_last_sync,
-        "left": _nav_button("<", ScreenId.AGENDA),
+        "left": _nav_button("<", ScreenId.ALARM),
         "right": _nav_button(">", ScreenId.MAIN),
     }
 
@@ -373,6 +412,8 @@ def settings_layout(data: SettingsScreenData) -> dict:
 def layout_for(navigator: Navigator, data: GuiData) -> dict:
     if navigator.current is ScreenId.AGENDA:
         return agenda_layout(data.agenda)
+    if navigator.current is ScreenId.ALARM:
+        return alarm_layout(data.alarm)
     if navigator.current is ScreenId.SETTINGS:
         return settings_layout(data.settings)
     return main_layout(data.main)

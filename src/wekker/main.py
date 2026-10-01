@@ -378,27 +378,6 @@ def shutdown(rt: Runtime) -> None:
         rt.background.close()
 
 
-def _run_touch_setup(args: argparse.Namespace) -> int:
-    from wekker.touch_setup import TouchConfigurator, TouchSetupError
-
-    manager = TouchConfigurator(home=args.home or None)
-    try:
-        if args.status:
-            status = manager.detect()
-        elif args.verify:
-            status = manager.verify_after_boot()
-        else:
-            status = manager.apply(
-                profile=args.profile,
-                confirmed=bool(args.confirmed),
-            )
-    except TouchSetupError as exc:
-        print(f"fout: {exc}", file=sys.stderr)
-        return 2
-    print(json.dumps(status.to_dict(), ensure_ascii=False, indent=2))
-    return 0
-
-
 def _run_healthcheck(settings_path: str) -> int:
     """Expliciete app-healthcheck voor de updater, zonder netwerk of GUI."""
     try:
@@ -445,13 +424,6 @@ def main(argv: list[str] | None = None) -> None:
     health_p = sub.add_parser("healthcheck", help="lokale update-healthcheck")
     health_p.add_argument("--settings", default="wekker-settings.json")
 
-    touch_p = sub.add_parser("touch-setup", help="Waveshare touch/display configureren")
-    touch_p.add_argument("--profile", default="waveshare-5-hdmi-ads7846")
-    touch_p.add_argument("--confirmed", action="store_true",
-                         help="bevestig profiel als ADS7846 nog niet gedetecteerd is")
-    touch_p.add_argument("--status", action="store_true")
-    touch_p.add_argument("--verify", action="store_true")
-    touch_p.add_argument("--home", default=None, help="gebruikers-home voor labwc rc.xml")
 
     args = parser.parse_args(argv)
     setup_logging()
@@ -464,8 +436,6 @@ def main(argv: list[str] | None = None) -> None:
         return
     if args.command == "healthcheck":
         raise SystemExit(_run_healthcheck(args.settings))
-    if args.command == "touch-setup":
-        raise SystemExit(_run_touch_setup(args))
     parser.print_help()
 
 

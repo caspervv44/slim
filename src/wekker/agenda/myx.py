@@ -148,31 +148,46 @@ def _extract_labeled(description: str, labels: tuple[str, ...]) -> str:
             return waarde.strip()
     return ""
 
+def _clean_room_value(value: str) -> str:
+    """Normaliseer lege/placeholder-locaties uit MyX/Xedule.
+
+    Sommige feeds vullen ``LOCATION`` letterlijk met ``-`` of ``—``. In v8
+    werd zo'n teken ten onrechte als een echte locatie gezien, waardoor de
+    parser niet meer in DESCRIPTION/X-ALT-DESC zocht.
+    """
+    value = html.unescape(str(value or ""))
+    value = re.sub(r"<br\s*/?>", "\n", value, flags=re.I)
+    value = re.sub(r"<[^>]+>", " ", value)
+    value = re.sub(r"\s+", " ", value).strip(" \t\r\n,;")
+    compact = re.sub(r"[\s.]+", "", value).casefold()
+    if compact in {"", "-", "—", "nvt", "geen", "geenlokaal", "onbekend", "tbd"}:
+        return ""
+    return value
+
+
 def _extract_room_candidates(text: str) -> str:
     """Zoek lokaalcodes in vrije MyX/Xedule-tekst.
 
     De feed zet lokalen niet consequent in ``LOCATION``. In praktijk komen ze
-    ook voor in DESCRIPTION, HTML-fragmenten en vendorvelden. De herkenning is
-    daarom bewust gebaseerd op het lokaalpatroon zelf en niet op één ICS-key.
-
-    Voorbeelden die worden herkend:
-    ``LVM-E2.12``, ``E2.14``, ``B1.03`` en ``A0.12``.
+    ook voor in DESCRIPTION, HTML-fragmenten en vendorvelden. Naast
+    ``LVM-E2.12`` accepteert v9 ook varianten met spaties zoals
+    ``LVM E2.12``. Resultaten worden teruggebracht naar één consistente vorm.
     """
+    text = _clean_room_value(text)
     if not text:
         return ""
 
-    # HTML uit Xedule normaliseren voordat we zoeken.
-    text = html.unescape(text)
-    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
-    text = re.sub(r"<[^>]+>", " ", text)
-
     found: list[str] = []
+    # Campusprefix + lokaalcodes: LVM-E2.12, LVM E2.12, E2.14, B1.03.
     pattern = re.compile(
-        r"\b(?:[A-Z]{2,8}-)?[A-Z]\d{1,2}(?:[.-]\d{1,3})+\b",
+        r"\b(?:(?P<prefix>[A-Z]{2,10})[\s_-]+)?"
+        r"(?P<room>[A-Z]{1,3}\d{1,2}(?:[.-]\d{1,3})+)\b",
         re.I,
     )
-    for candidate in pattern.findall(text.upper()):
-        candidate = candidate.replace("-", "-", 1).strip()
+    for match in pattern.finditer(text.upper()):
+        prefix = (match.group("prefix") or "").strip()
+        room = match.group("room").strip()
+        candidate = f"{prefix}-{room}" if prefix else room
         if candidate not in found:
             found.append(candidate)
     return " / ".join(found[:4])
@@ -183,17 +198,26 @@ def _extract_event_room(
     description: str,
     location: str,
 ) -> str:
-    """Vind een lokaal onafhankelijk van waar MyX het in VEVENT plaatst."""
-    if location:
-        return location
+    """Vind het echte lokaal, ook als ``LOCATION`` alleen campus/placeholder bevat.
 
-    labeled = _extract_labeled(description, ("Lokaal", "Locatie", "Room"))
-    if labeled:
-        return labeled
+    Xedule/MyX zet de bruikbare lokaalcode niet altijd in ``LOCATION``. Daarom
+    krijgt een herkenbare code (bijv. ``LVM-E2.12``) altijd voorrang, waarna
+    DESCRIPTION, HTML/vendorvelden, COMMENT en RESOURCES worden doorzocht.
+    Alleen als nergens een lokaalcode staat, gebruiken we een betekenisvolle
+    LOCATION-tekst als fallback.
+    """
+    clean_location = _clean_room_value(location)
+    location_candidates = _extract_room_candidates(clean_location)
+    if location_candidates:
+        return location_candidates
 
-    # Eerst DESCRIPTION, daarna alle overige tekstvelden. Hierdoor werken ook
-    # feeds waarin Xedule de zichtbare locatie in X-ALT-DESC, COMMENT,
-    # RESOURCES of een vendor-specifieke eigenschap plaatst.
+    labeled = _clean_room_value(
+        _extract_labeled(description, ("Lokaal", "Locatie", "Room", "Ruimte"))
+    )
+    labeled_candidates = _extract_room_candidates(labeled)
+    if labeled_candidates:
+        return labeled_candidates
+
     candidates = _extract_room_candidates(description)
     if candidates:
         return candidates
@@ -208,7 +232,13 @@ def _extract_event_room(
                 searchable.append(_unescape_text(value))
             except Exception:
                 searchable.append(value)
-    return _extract_room_candidates("\n".join(searchable))
+    candidates = _extract_room_candidates("\n".join(searchable))
+    if candidates:
+        return candidates
+
+    # Een campusnaam zoals "LVM" is bruikbare fallback-informatie, maar wordt
+    # pas gebruikt nadat alle velden op een specifiek lokaal zijn gecontroleerd.
+    return clean_location or labeled
 
 
 def parse_ics(text: str) -> list[Lesson]:
