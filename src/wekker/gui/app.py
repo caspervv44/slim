@@ -1,4 +1,4 @@
-"""WakeSync v10 fullscreen touchscreen-app voor 800×480 Raspberry Pi.
+"""WakeSync v10.1 fullscreen touchscreen-app voor 800×480 Raspberry Pi.
 
 De renderer blijft bewust Tkinter. Netwerk- en hardwaredetectietaken lopen op
 achtergrondthreads; widgets worden alleen op de Tk-hoofdthread gewijzigd.
@@ -7,6 +7,7 @@ achtergrondthreads; widgets worden alleen op de Tk-hoofdthread gewijzigd.
 from __future__ import annotations
 
 from datetime import date, timedelta
+import calendar
 import math
 import logging
 import os
@@ -40,29 +41,31 @@ log = logging.getLogger(__name__)
 REFRESH_MS = 1000
 
 THEMES = {
+    # De logo-kleuren blijven altijd exact gelijk. Thema-accenten zijn daarom
+    # bewust naar hetzelfde koele blauw/cyaan-spectrum getrokken.
     "midnight": {
-        "bg": "#08111f", "card": "#101c2e", "card_alt": "#132239",
-        "text": "#f8fafc", "muted": "#8ea2bd", "accent": "#4f8cff",
-        "accent_dark": "#2f63bd", "border": "#1e3049", "success": "#55d6a3",
-        "danger": "#ef6b73",
+        "bg": "#07111f", "card": "#0f1c2f", "card_alt": "#13243a",
+        "text": "#f8fafc", "muted": "#8ea2bd", "accent": "#168cf2",
+        "accent_dark": "#0b5fa8", "border": "#1d3550", "success": "#55d6a3",
+        "danger": "#ef6b73", "brand_bg": "#f8fbff", "brand_border": "#cfe5fb",
     },
     "ocean": {
-        "bg": "#071a22", "card": "#0d2933", "card_alt": "#123743",
-        "text": "#eefcff", "muted": "#91bac4", "accent": "#42c7e8",
-        "accent_dark": "#1689a6", "border": "#1b4855", "success": "#5de0af",
-        "danger": "#ff7b86",
+        "bg": "#071923", "card": "#0c2935", "card_alt": "#103a49",
+        "text": "#eefcff", "muted": "#91bac4", "accent": "#20a3f5",
+        "accent_dark": "#0d78b8", "border": "#1a4b5c", "success": "#5de0af",
+        "danger": "#ff7b86", "brand_bg": "#f8fbff", "brand_border": "#cfe5fb",
     },
     "light": {
-        "bg": "#edf3f8", "card": "#ffffff", "card_alt": "#e4edf5",
-        "text": "#172033", "muted": "#617286", "accent": "#2563eb",
-        "accent_dark": "#cfe0ff", "border": "#cbd7e3", "success": "#17795a",
-        "danger": "#b42318",
+        "bg": "#edf4fa", "card": "#ffffff", "card_alt": "#e3edf6",
+        "text": "#172033", "muted": "#617286", "accent": "#167fe8",
+        "accent_dark": "#d4e7fb", "border": "#cad9e7", "success": "#17795a",
+        "danger": "#b42318", "brand_bg": "#ffffff", "brand_border": "#d6e5f3",
     },
     "amber": {
-        "bg": "#160f08", "card": "#251a0e", "card_alt": "#342416",
-        "text": "#fff7e8", "muted": "#c5a77f", "accent": "#ffb020",
-        "accent_dark": "#9a5a00", "border": "#4d361f", "success": "#64d8a4",
-        "danger": "#ff7777",
+        "bg": "#15110d", "card": "#241c13", "card_alt": "#332719",
+        "text": "#fff7e8", "muted": "#c8aa83", "accent": "#168cf2",
+        "accent_dark": "#0b5fa8", "border": "#4a3927", "success": "#64d8a4",
+        "danger": "#ff7777", "brand_bg": "#fffaf2", "brand_border": "#ead9bc",
     },
 }
 THEME_CHOICES = (
@@ -104,7 +107,7 @@ TIMEZONE_CHOICES = (
 
 
 def _set_theme_palette(theme: str) -> None:
-    global BG, CARD, CARD_ALT, TEXT, MUTED, ACCENT, ACCENT_DARK, BORDER, SUCCESS, DANGER
+    global BG, CARD, CARD_ALT, TEXT, MUTED, ACCENT, ACCENT_DARK, BORDER, SUCCESS, DANGER, BRAND_BG, BRAND_BORDER
     palette = THEMES.get(theme, THEMES["midnight"])
     BG = palette["bg"]
     CARD = palette["card"]
@@ -116,6 +119,8 @@ def _set_theme_palette(theme: str) -> None:
     BORDER = palette["border"]
     SUCCESS = palette["success"]
     DANGER = palette["danger"]
+    BRAND_BG = palette["brand_bg"]
+    BRAND_BORDER = palette["brand_border"]
 
 
 _set_theme_palette("midnight")
@@ -182,7 +187,8 @@ def build_gui_data(
                     id=profile.id,
                     time=profile.time,
                     enabled=profile.enabled,
-                    day_label=_alarm_day_label(profile.time, now),
+                    date=profile.date,
+                    day_label=_alarm_day_label(profile.time, now, profile.date),
                     snooze_minutes=profile.snooze_minutes,
                     sound=profile.sound,
                     volume=profile.volume,
@@ -210,9 +216,23 @@ def build_gui_data(
     )
 
 
-def _alarm_day_label(alarm_time: str, now: Any) -> str:
-    """Geef Vandaag/Morgen voor de eerstvolgende dagelijkse uitvoering."""
+def _alarm_day_label(
+    alarm_time: str,
+    now: Any,
+    alarm_date: str | None = None,
+) -> str:
+    """Geef een compacte dagtekst voor dagelijkse of eenmalige alarmen."""
     try:
+        if alarm_date:
+            target = date.fromisoformat(alarm_date)
+            if target == now.date():
+                return "Vandaag"
+            if target == now.date() + timedelta(days=1):
+                return "Morgen"
+            if target < now.date():
+                return "Verlopen"
+            return f"{target.day} {DUTCH_MONTHS[target.month][:3].lower()}"
+
         hour, minute = (int(x) for x in str(alarm_time).split(":", 1))
         candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
         return "Vandaag" if candidate > now else "Morgen"
@@ -267,11 +287,15 @@ class TouchApp:
         self._last_activity = time.monotonic()
         self._sleep_animation_job: str | None = None
         self._sleep_phase = 0.0
+        self._sleep_render_failures = 0
         self._alarm_selected_id: str | None = None
         self._alarm_list_page = 0
         self._alarm_creator_overlay: Any | None = None
-        self._alarm_creator_mode = "hour"
+        self._alarm_creator_mode = "date"
+        self._alarm_pending_date: str | None = None
+        self._alarm_calendar_month: date | None = None
         self._alarm_pending_hour: int | None = None
+        self._alarm_drag_value: int | None = None
 
         try:
             self._active_theme = str(runtime.ctx.settings.display.theme)
@@ -388,11 +412,15 @@ class TouchApp:
             self._build_settings(layout)
 
     def _brand_photo(self, max_size: tuple[int, int] = (112, 43)) -> Any | None:
-        """Laad het goedgekeurde C9-logo passend bij het actieve thema."""
+        """Laad altijd exact hetzelfde goedgekeurde logo.
+
+        Thema's passen zich aan de branding aan; de merkpixels zelf worden nooit
+        opnieuw ingekleurd. Daardoor blijft ook het korte streepje in de A exact
+        gelijk aan de aangeleverde bron.
+        """
         try:
             from PIL import Image, ImageTk
-            name = "wakesync-logo.png" if self._active_theme == "light" else "wakesync-logo-dark.png"
-            path = Path(__file__).resolve().parents[1] / "assets" / name
+            path = Path(__file__).resolve().parents[1] / "assets" / "wakesync-logo.png"
             image = Image.open(path).convert("RGBA")
             image.thumbnail(max_size, Image.Resampling.LANCZOS)
             return ImageTk.PhotoImage(image)
@@ -408,8 +436,16 @@ class TouchApp:
         ).pack(side="left")
         photo = self._brand_photo()
         if photo is not None:
-            logo = tk.Label(top, image=photo, bg=BG, bd=0)
-            logo.pack(side="right", padx=(12, 0))
+            brand_panel = tk.Frame(
+                top,
+                bg=BRAND_BG,
+                highlightbackground=BRAND_BORDER,
+                highlightthickness=1,
+                padx=5,
+                pady=2,
+            )
+            brand_panel.pack(side="right", padx=(12, 0))
+            tk.Label(brand_panel, image=photo, bg=BRAND_BG, bd=0).pack()
             self._widgets["_brand_header_photo"] = photo
         if subtitle:
             tk.Label(
@@ -862,6 +898,102 @@ class TouchApp:
             alarm_id, {field: values[(index + 1) % len(values)]}
         )
 
+    def _make_toggle(
+        self,
+        parent: Any,
+        enabled: bool,
+        command: Any,
+        *,
+        width: int = 58,
+        height: int = 30,
+    ) -> Any:
+        """Maak een touchvriendelijke schuifschakelaar met korte animatie."""
+        tk = self._tk()
+        try:
+            parent_bg = str(parent.cget("bg"))
+        except Exception:
+            parent_bg = CARD
+
+        canvas = tk.Canvas(
+            parent,
+            width=width,
+            height=height,
+            bg=parent_bg,
+            highlightthickness=0,
+            bd=0,
+            cursor="hand2",
+        )
+        margin = 2
+        radius = (height - 2 * margin) / 2
+        left = margin
+        right = width - margin
+        center_y = height / 2
+        travel = (right - radius) - (left + radius)
+        state = {"enabled": bool(enabled), "busy": False}
+
+        def draw(progress: float) -> None:
+            progress = max(0.0, min(1.0, progress))
+            off = "#465365" if self._active_theme != "light" else "#b9c6d4"
+            track = self._blend_hex(off, ACCENT, progress)
+            canvas.delete("toggle")
+            x0, x1 = left, right
+            y0, y1 = margin, height - margin
+            r = radius
+            canvas.create_rectangle(
+                x0 + r, y0, x1 - r, y1,
+                fill=track, outline="", tags=("toggle",),
+            )
+            canvas.create_oval(
+                x0, y0, x0 + 2 * r, y1,
+                fill=track, outline="", tags=("toggle",),
+            )
+            canvas.create_oval(
+                x1 - 2 * r, y0, x1, y1,
+                fill=track, outline="", tags=("toggle",),
+            )
+            knob_x = left + radius + travel * progress
+            knob_r = radius - 4
+            canvas.create_oval(
+                knob_x - knob_r,
+                center_y - knob_r,
+                knob_x + knob_r,
+                center_y + knob_r,
+                fill="#ffffff",
+                outline="#dce6f1",
+                width=1,
+                tags=("toggle",),
+            )
+
+        def click(_event: Any = None) -> str:
+            if state["busy"]:
+                return "break"
+            state["busy"] = True
+            start = 1.0 if state["enabled"] else 0.0
+            target = 0.0 if state["enabled"] else 1.0
+            steps = 6
+
+            def animate(step: int) -> None:
+                t = step / steps
+                # Smoothstep voorkomt een mechanische, abrupte schuifbeweging.
+                eased = t * t * (3.0 - 2.0 * t)
+                draw(start + (target - start) * eased)
+                if step < steps:
+                    try:
+                        self._root.after(14, lambda: animate(step + 1))
+                    except Exception:
+                        animate(steps)
+                    return
+                state["enabled"] = not state["enabled"]
+                state["busy"] = False
+                command()
+
+            animate(1)
+            return "break"
+
+        canvas.bind("<Button-1>", click)
+        draw(1.0 if enabled else 0.0)
+        return canvas
+
     def _build_alarm_screen(self, layout: dict) -> None:
         tk = self._tk()
         self._top_title("Alarm", "Meerdere wekkers")
@@ -953,20 +1085,12 @@ class TouchApp:
             choose.pack(side="left", fill="both", expand=True)
 
             enabled = bool(item.get("enabled", True))
-            switch = tk.Button(
+            switch = self._make_toggle(
                 row,
-                text=("      ●" if enabled else "●      "),
-                font=("DejaVu Sans", 9, "bold"),
-                fg="#ffffff" if enabled else "#c3ccd7",
-                bg=ACCENT if enabled else "#3b4657",
-                activebackground=ACCENT if enabled else "#4a5668",
-                activeforeground="#ffffff",
-                bd=0,
-                width=8,
-                pady=7,
-                command=lambda aid=alarm_id: self._toggle_alarm_profile(aid),
+                enabled,
+                lambda aid=alarm_id: self._toggle_alarm_profile(aid),
             )
-            switch.pack(side="right", padx=8, pady=8)
+            switch.pack(side="right", padx=10, pady=8)
 
         if page_count > 1:
             pager = tk.Frame(left, bg=CARD)
@@ -1022,6 +1146,7 @@ class TouchApp:
             (
                 str(item.get("id")),
                 str(item.get("time")),
+                str(item.get("date") or ""),
                 bool(item.get("enabled")),
                 str(item.get("day_label")),
                 int(item.get("snooze_minutes", 9)),
@@ -1110,29 +1235,23 @@ class TouchApp:
 
         speaker_row = row("Speaker")
         speaker_on = bool(item.get("speaker_enabled", True))
-        tk.Button(
+        self._make_toggle(
             speaker_row,
-            text="Aan" if speaker_on else "Uit",
-            font=("DejaVu Sans", 9, "bold"),
-            fg=TEXT, bg=ACCENT_DARK if speaker_on else CARD_ALT,
-            bd=0, padx=8,
-            command=lambda: self._toggle_alarm_profile_bool(
-                alarm_id, "speaker_enabled"
-            ),
-        ).pack(side="right", padx=5)
+            speaker_on,
+            lambda: self._toggle_alarm_profile_bool(alarm_id, "speaker_enabled"),
+            width=54,
+            height=28,
+        ).pack(side="right", padx=7, pady=2)
 
         lamp_row = row("Lamp")
         lamp_on = bool(item.get("lamp_blink", True))
-        tk.Button(
+        self._make_toggle(
             lamp_row,
-            text="Aan" if lamp_on else "Uit",
-            font=("DejaVu Sans", 9, "bold"),
-            fg=TEXT, bg=ACCENT_DARK if lamp_on else CARD_ALT,
-            bd=0, padx=8,
-            command=lambda: self._toggle_alarm_profile_bool(
-                alarm_id, "lamp_blink"
-            ),
-        ).pack(side="right", padx=5)
+            lamp_on,
+            lambda: self._toggle_alarm_profile_bool(alarm_id, "lamp_blink"),
+            width=54,
+            height=28,
+        ).pack(side="right", padx=7, pady=2)
 
         lamp_power_row = row("Lampsterkte")
         tk.Label(
@@ -1192,14 +1311,19 @@ class TouchApp:
         self._screen = None
         self.render()
 
-    # -- Nieuw alarm: uur -> minuten -----------------------------------
+    # -- Nieuw alarm: datum -> tijd (uur/minuut) ------------------------
     def _show_alarm_creator(self) -> None:
         if len(self._alarm_dicts()) >= 12:
             self._show_toast("Maximaal 12 alarmen", error=True)
             return
         self._close_alarm_creator()
-        self._alarm_creator_mode = "hour"
+        self._alarm_creator_mode = "date"
+        self._alarm_pending_date = None
+        today = self._runtime.ctx.clock.now().date()
+        self._alarm_calendar_month = today.replace(day=1)
         self._alarm_pending_hour = None
+        self._alarm_drag_value = None
+
         tk = self._tk()
         overlay = tk.Frame(self._root, bg="#050b14")
         overlay.place(x=0, y=0, relwidth=1, relheight=1)
@@ -1215,17 +1339,19 @@ class TouchApp:
             bd=0,
         )
         canvas.pack(fill="both", expand=True)
-        canvas.bind("<Button-1>", self._alarm_creator_click)
+        canvas.bind("<ButtonPress-1>", self._alarm_creator_press)
+        canvas.bind("<B1-Motion>", self._alarm_creator_drag)
+        canvas.bind("<ButtonRelease-1>", self._alarm_creator_release)
         self._widgets["_alarm_creator_canvas"] = canvas
 
         close = tk.Button(
             overlay,
             text="×",
             font=("DejaVu Sans", 20, "bold"),
-            fg=TEXT,
+            fg="#f8fafc",
             bg="#050b14",
-            activebackground=CARD_ALT,
-            activeforeground=TEXT,
+            activebackground="#13243a",
+            activeforeground="#f8fafc",
             bd=0,
             command=self._close_alarm_creator,
         )
@@ -1236,6 +1362,7 @@ class TouchApp:
         overlay = self._alarm_creator_overlay
         self._alarm_creator_overlay = None
         self._widgets.pop("_alarm_creator_canvas", None)
+        self._alarm_drag_value = None
         if overlay is not None:
             try:
                 overlay.destroy()
@@ -1247,90 +1374,303 @@ class TouchApp:
         if canvas is None:
             return
         canvas.delete("all")
-        cx, cy, radius = 400.0, 264.0, 154.0
-        is_hour = self._alarm_creator_mode == "hour"
-        title = "Kies uur" if is_hour else "Kies minuten"
-        subtitle = (
-            "Stap 1 van 2"
-            if is_hour
-            else f"Stap 2 van 2  ·  {int(self._alarm_pending_hour or 0):02d}:__"
-        )
+        if self._alarm_creator_mode == "date":
+            self._draw_alarm_date_picker(canvas)
+        else:
+            self._draw_alarm_time_picker(canvas)
+
+    def _draw_alarm_date_picker(self, canvas: Any) -> None:
+        """Stap 1: touchvriendelijke kalender voor een eenmalig alarm."""
+        today = self._runtime.ctx.clock.now().date()
+        month = self._alarm_calendar_month or today.replace(day=1)
+        self._alarm_calendar_month = month
+
         canvas.create_text(
-            cx, 48,
+            36, 29,
             text="Nieuw alarm",
+            anchor="w",
             fill="#f8fafc",
-            font=("DejaVu Sans", 21, "bold"),
+            font=("DejaVu Sans", 20, "bold"),
         )
         canvas.create_text(
-            cx, 83,
-            text=f"{title}  ·  {subtitle}",
+            36, 58,
+            text="Stap 1 van 2 · kies een datum",
+            anchor="w",
             fill="#8ea2bd",
             font=("DejaVu Sans", 10, "bold"),
         )
+
+        # Dagelijks blijft beschikbaar voor bestaande WakeSync-workflows.
+        canvas.create_rectangle(
+            608, 24, 716, 62,
+            fill="#0b5fa8",
+            outline="",
+            tags=("daily",),
+        )
+        canvas.create_text(
+            662, 43,
+            text="Dagelijks",
+            fill="#ffffff",
+            font=("DejaVu Sans", 9, "bold"),
+            tags=("daily",),
+        )
+
+        title = f"{DUTCH_MONTHS[month.month].capitalize()} {month.year}"
+        canvas.create_text(
+            400, 99,
+            text=title,
+            fill="#f8fafc",
+            font=("DejaVu Sans", 16, "bold"),
+        )
+
+        first_allowed = today.replace(day=1)
+        last_allowed_day = today + timedelta(days=365)
+        last_allowed = last_allowed_day.replace(day=1)
+
+        prev_enabled = month > first_allowed
+        next_enabled = month < last_allowed
+        canvas.create_text(
+            230, 99,
+            text="‹",
+            fill="#f8fafc" if prev_enabled else "#405067",
+            font=("DejaVu Sans", 25, "bold"),
+            tags=("month_prev",) if prev_enabled else (),
+        )
+        canvas.create_text(
+            570, 99,
+            text="›",
+            fill="#f8fafc" if next_enabled else "#405067",
+            font=("DejaVu Sans", 25, "bold"),
+            tags=("month_next",) if next_enabled else (),
+        )
+
+        weekdays = ("MA", "DI", "WO", "DO", "VR", "ZA", "ZO")
+        grid_left = 148
+        grid_top = 132
+        cell_w = 72
+        cell_h = 44
+        for col, label in enumerate(weekdays):
+            canvas.create_text(
+                grid_left + col * cell_w + cell_w / 2,
+                grid_top,
+                text=label,
+                fill="#6f839f",
+                font=("DejaVu Sans", 8, "bold"),
+            )
+
+        weeks = calendar.Calendar(firstweekday=0).monthdayscalendar(
+            month.year, month.month
+        )
+        while len(weeks) < 6:
+            weeks.append([0] * 7)
+
+        for row_index, week in enumerate(weeks[:6]):
+            for col_index, day_number in enumerate(week):
+                if not day_number:
+                    continue
+                day = date(month.year, month.month, day_number)
+                selectable = today <= day <= last_allowed_day
+                x0 = grid_left + col_index * cell_w + 5
+                y0 = grid_top + 18 + row_index * cell_h
+                x1 = x0 + cell_w - 10
+                y1 = y0 + cell_h - 7
+
+                selected = self._alarm_pending_date == day.isoformat()
+                fill = "#168cf2" if selected else "#0d1929"
+                outline = "#1e3550" if selectable else "#111b28"
+                text_color = (
+                    "#ffffff" if selectable else "#435166"
+                )
+                tags = (f"date:{day.isoformat()}",) if selectable else ()
+                canvas.create_rectangle(
+                    x0, y0, x1, y1,
+                    fill=fill,
+                    outline=outline,
+                    width=1,
+                    tags=tags,
+                )
+                canvas.create_text(
+                    (x0 + x1) / 2,
+                    (y0 + y1) / 2,
+                    text=str(day_number),
+                    fill=text_color,
+                    font=("DejaVu Sans", 10, "bold"),
+                    tags=tags,
+                )
+
+        canvas.create_text(
+            400, 452,
+            text="Kies een dag. Daarna stel je de tijd in.",
+            fill="#526176",
+            font=("DejaVu Sans", 9),
+        )
+
+    def _draw_alarm_time_picker(self, canvas: Any) -> None:
+        """Stap 2: dragbare 360°-wijzer met live digitale tijd."""
+        cx, cy, radius = 400.0, 286.0, 142.0
+        is_hour = self._alarm_creator_mode == "hour"
+        chosen = self._alarm_drag_value
+
+        date_label = (
+            "Dagelijks"
+            if not self._alarm_pending_date
+            else date.fromisoformat(self._alarm_pending_date).strftime("%d-%m-%Y")
+        )
+        canvas.create_text(
+            36, 27,
+            text="Nieuw alarm",
+            anchor="w",
+            fill="#f8fafc",
+            font=("DejaVu Sans", 19, "bold"),
+        )
+        canvas.create_text(
+            36, 54,
+            text=f"Stap 2 van 2 · {date_label} · {'uur' if is_hour else 'minuten'}",
+            anchor="w",
+            fill="#8ea2bd",
+            font=("DejaVu Sans", 9, "bold"),
+        )
+
+        if is_hour:
+            live = f"{chosen:02d}:__" if chosen is not None else "__:__"
+        else:
+            hour = int(self._alarm_pending_hour or 0)
+            live = f"{hour:02d}:{chosen:02d}" if chosen is not None else f"{hour:02d}:__"
+        canvas.create_text(
+            cx, 91,
+            text=live,
+            fill="#ffffff",
+            font=("DejaVu Sans", 31, "bold"),
+            tags=("creator_live_time",),
+        )
+
         canvas.create_oval(
             cx-radius, cy-radius, cx+radius, cy+radius,
-            outline="#20344f", width=3, fill="#0c1828",
+            outline="#203a58", width=3, fill="#0b1727",
         )
         divisions = 24 if is_hour else 60
         label_every = 1 if is_hour else 5
         for i in range(divisions):
             angle = (i / divisions) * 2 * math.pi - math.pi / 2
-            outer = radius - 7
+            outer = radius - 6
             major = i % label_every == 0
-            inner = radius - (18 if major else 10)
+            inner = radius - (17 if major else 9)
             x1 = cx + math.cos(angle) * inner
             y1 = cy + math.sin(angle) * inner
             x2 = cx + math.cos(angle) * outer
             y2 = cy + math.sin(angle) * outer
             canvas.create_line(
                 x1, y1, x2, y2,
-                fill="#4f8cff" if major else "#41536a",
+                fill="#399ff6" if major else "#3e5067",
                 width=2 if major else 1,
             )
             if major:
-                label_r = radius - 38
+                label_r = radius - 34
                 lx = cx + math.cos(angle) * label_r
                 ly = cy + math.sin(angle) * label_r
                 canvas.create_text(
-                    lx, ly,
+                    lx,
+                    ly,
                     text=f"{i:02d}",
                     fill="#f8fafc",
-                    font=("DejaVu Sans", 8 if is_hour else 9, "bold"),
+                    font=("DejaVu Sans", 7 if is_hour else 9, "bold"),
                 )
-        center_text = (
-            "UUR"
-            if is_hour
-            else f'{int(self._alarm_pending_hour or 0):02d}:MIN'
-        )
-        canvas.create_text(
-            cx, cy,
-            text=center_text,
-            fill="#4f8cff",
-            font=("DejaVu Sans", 13, "bold"),
-        )
-        canvas.create_text(
-            cx, 444,
-            text="Tik op de cirkel om te kiezen",
-            fill="#526176",
-            font=("DejaVu Sans", 9),
-        )
 
-    def _alarm_creator_click(self, event: Any) -> None:
-        cx, cy, radius = 400.0, 264.0, 154.0
-        distance = math.hypot(float(event.x) - cx, float(event.y) - cy)
-        if distance < 55 or distance > radius + 18:
-            return
-        if self._alarm_creator_mode == "hour":
-            self._alarm_pending_hour = self._angle_value(
-                float(event.x), float(event.y), cx, cy, 24
+        # De wijzer volgt tijdens slepen continu de gekozen waarde.
+        if chosen is not None:
+            angle = (chosen / divisions) * 2 * math.pi - math.pi / 2
+            hand_r = radius - 48
+            hx = cx + math.cos(angle) * hand_r
+            hy = cy + math.sin(angle) * hand_r
+            canvas.create_line(
+                cx, cy, hx, hy,
+                fill="#22a6f2",
+                width=5,
+                capstyle="round",
             )
-            self._alarm_creator_mode = "minute"
-            self._draw_alarm_creator()
-            return
+            canvas.create_oval(
+                hx-9, hy-9, hx+9, hy+9,
+                fill="#168cf2",
+                outline="#8fd3ff",
+                width=2,
+            )
 
-        minute = self._angle_value(
-            float(event.x), float(event.y), cx, cy, 60
+        canvas.create_oval(
+            cx-8, cy-8, cx+8, cy+8,
+            fill="#ffffff",
+            outline="#168cf2",
+            width=3,
         )
+        canvas.create_text(
+            cx, 454,
+            text="Sleep de wijzer en laat los om te bevestigen",
+            fill="#6f839f",
+            font=("DejaVu Sans", 9, "bold"),
+        )
+
+    def _alarm_creator_press(self, event: Any) -> str | None:
+        if self._alarm_creator_mode == "date":
+            return None
+        self._alarm_drag_value = None
+        if self._update_alarm_drag_value(event):
+            return "break"
+        return None
+
+    def _alarm_creator_drag(self, event: Any) -> str | None:
+        if self._alarm_creator_mode in {"hour", "minute"}:
+            if self._update_alarm_drag_value(event):
+                return "break"
+        return None
+
+    def _alarm_creator_release(self, event: Any) -> str | None:
+        canvas = self._widgets.get("_alarm_creator_canvas")
+        if canvas is None:
+            return None
+
+        if self._alarm_creator_mode == "date":
+            tags: tuple[str, ...] = ()
+            try:
+                current = canvas.find_withtag("current")
+                if current:
+                    tags = canvas.gettags(current[-1])
+            except Exception:
+                tags = ()
+
+            if "daily" in tags:
+                self._alarm_pending_date = None
+                self._alarm_creator_mode = "hour"
+                self._alarm_drag_value = None
+                self._draw_alarm_creator()
+                return "break"
+            if "month_prev" in tags:
+                self._shift_alarm_calendar_month(-1)
+                return "break"
+            if "month_next" in tags:
+                self._shift_alarm_calendar_month(1)
+                return "break"
+            for tag in tags:
+                if tag.startswith("date:"):
+                    self._alarm_pending_date = tag.split(":", 1)[1]
+                    self._alarm_creator_mode = "hour"
+                    self._alarm_drag_value = None
+                    self._draw_alarm_creator()
+                    return "break"
+            return None
+
+        # Neem ook de releasepositie mee: bij snel slepen is dat de meest
+        # precieze gebruikersintentie.
+        self._update_alarm_drag_value(event)
+        if self._alarm_drag_value is None:
+            return None
+
+        if self._alarm_creator_mode == "hour":
+            self._alarm_pending_hour = int(self._alarm_drag_value)
+            self._alarm_creator_mode = "minute"
+            self._alarm_drag_value = None
+            self._draw_alarm_creator()
+            return "break"
+
+        minute = int(self._alarm_drag_value)
         hour = int(self._alarm_pending_hour or 0)
         items = self._alarm_dicts()
         template = dict(items[0]) if items else {
@@ -1348,6 +1688,7 @@ class TouchApp:
             **template,
             "id": alarm_id,
             "time": f"{hour:02d}:{minute:02d}",
+            "date": self._alarm_pending_date,
             "enabled": True,
         }
         items.append(new_item)
@@ -1356,6 +1697,36 @@ class TouchApp:
             self._close_alarm_creator()
             self._screen = None
             self.render()
+        return "break"
+
+    def _update_alarm_drag_value(self, event: Any) -> bool:
+        cx, cy, radius = 400.0, 286.0, 142.0
+        distance = math.hypot(float(event.x) - cx, float(event.y) - cy)
+        if distance < 38 or distance > radius + 24:
+            return False
+        divisions = 24 if self._alarm_creator_mode == "hour" else 60
+        value = self._angle_value(
+            float(event.x), float(event.y), cx, cy, divisions
+        )
+        if value != self._alarm_drag_value:
+            self._alarm_drag_value = value
+            self._draw_alarm_creator()
+        return True
+
+    def _shift_alarm_calendar_month(self, delta: int) -> None:
+        today = self._runtime.ctx.clock.now().date()
+        current = self._alarm_calendar_month or today.replace(day=1)
+        month_index = current.year * 12 + current.month - 1 + int(delta)
+        candidate = date(month_index // 12, month_index % 12 + 1, 1)
+        first_allowed = today.replace(day=1)
+        last_day = today + timedelta(days=365)
+        last_allowed = last_day.replace(day=1)
+        if candidate < first_allowed:
+            candidate = first_allowed
+        if candidate > last_allowed:
+            candidate = last_allowed
+        self._alarm_calendar_month = candidate
+        self._draw_alarm_creator()
 
     @staticmethod
     def _angle_value(
@@ -1375,6 +1746,7 @@ class TouchApp:
             (
                 str(item.get("id")),
                 str(item.get("time")),
+                str(item.get("date") or ""),
                 bool(item.get("enabled")),
                 str(item.get("day_label")),
                 int(item.get("snooze_minutes", 9)),
@@ -1771,7 +2143,16 @@ class TouchApp:
         qr_top.pack(fill="x", padx=28, pady=(9, 5))
         brand = self._brand_photo((118, 44))
         if brand is not None:
-            tk.Label(qr_top, image=brand, bg=BG, bd=0).pack(side="left")
+            qr_brand_panel = tk.Frame(
+                qr_top,
+                bg=BRAND_BG,
+                highlightbackground=BRAND_BORDER,
+                highlightthickness=1,
+                padx=5,
+                pady=2,
+            )
+            qr_brand_panel.pack(side="left")
+            tk.Label(qr_brand_panel, image=brand, bg=BRAND_BG, bd=0).pack()
             self._widgets["_overlay_qr_brand"] = brand
         tk.Label(
             qr_top, text="Online beheer", font=("DejaVu Sans", 18, "bold"),
@@ -2235,6 +2616,24 @@ class TouchApp:
     # ------------------------------------------------------------------
     # Slaapmodus
     def _on_user_activity(self, _event: Any = None) -> str | None:
+        # Demo-sneltoets: P forceert direct slaapstand zonder op de ingestelde
+        # 30/60 seconden te hoeven wachten. Tijdens een alarm of modaal venster
+        # wordt de sneltoets bewust genegeerd zodat die schermen niet verborgen raken.
+        keysym = str(getattr(_event, "keysym", "") or "").lower()
+        if keysym == "p":
+            if any((
+                self._alarm_overlay is not None,
+                self._update_overlay is not None,
+                self._qr_overlay is not None,
+                self._settings_overlay is not None,
+                self._alarm_creator_overlay is not None,
+            )):
+                return "break"
+            self._last_activity = time.monotonic()
+            if not self._sleeping:
+                self._enter_sleep_mode()
+            return "break"
+
         self._last_activity = time.monotonic()
         if self._sleeping:
             self._wake_from_sleep()
@@ -2289,6 +2688,7 @@ class TouchApp:
             return
         self._sleeping = True
         self._sleep_phase = 0.0
+        self._sleep_render_failures = 0
         tk = self._tk()
         overlay = tk.Frame(self._root, bg="#030712")
         overlay.place(x=0, y=0, relwidth=1, relheight=1)
@@ -2307,10 +2707,18 @@ class TouchApp:
         canvas.bind("<Button-1>", self._on_user_activity)
         self._widgets["_overlay_sleep_canvas"] = canvas
 
-        # Goedgekeurd C9-logo. Op donkere schermen gebruiken we de variant
-        # met witte 'WAKE'-letters en behouden we de blauwe SYNC-accenten.
+        # Het aangeleverde C9-logo blijft in ieder thema exact gelijk.
+        # Een lichte merkkaart bewaakt het contrast zonder de logopixels
+        # opnieuw in te kleuren.
         photo = self._brand_photo((340, 132))
         if photo is not None:
+            canvas.create_rectangle(
+                204, 82, 596, 214,
+                fill="#f8fbff",
+                outline="#cfe5fb",
+                width=2,
+                tags=("sleep_content", "sleep_brand_panel"),
+            )
             canvas.create_image(
                 SCREEN_WIDTH / 2,
                 148,
@@ -2358,9 +2766,17 @@ class TouchApp:
         self._animate_sleep_glow()
 
     def _animate_sleep_glow(self) -> None:
+        """Animeer de slaapachtergrond zonder de Tk-eventloop te blokkeren.
+
+        Liquid Motion is bewust lichter dan in v10: minder splinepunten,
+        minder lagen en een rustiger frame-interval. Een renderfout stopt de
+        eventloop niet; na drie opeenvolgende fouten blijft alleen het effect
+        tijdelijk uit terwijl WakeSync wel bedienbaar blijft.
+        """
         if not self._sleeping:
             self._sleep_animation_job = None
             return
+
         canvas = self._widgets.get("_overlay_sleep_canvas")
         if canvas is None:
             self._sleep_animation_job = None
@@ -2368,152 +2784,235 @@ class TouchApp:
 
         settings = self._runtime.ctx.settings.display
         effect = str(getattr(settings, "sleep_effect", "soft_glow"))
-        intensity = max(0, min(100, int(getattr(settings, "sleep_glow_intensity", 65))))
-        canvas.delete("sleep_glow")
-        self._sleep_phase = (self._sleep_phase + 0.075) % (2 * math.pi)
+        intensity = max(
+            0,
+            min(100, int(getattr(settings, "sleep_glow_intensity", 65))),
+        )
+        effect_disabled = self._sleep_render_failures >= 3
+        interval_ms = (
+            250
+            if effect_disabled
+            else (145 if effect == "liquid_motion" else 90)
+        )
 
-        if effect != "off" and intensity > 0:
-            strength = intensity / 100.0
-            cx, cy = SCREEN_WIDTH / 2, 154
-            if effect == "soft_glow":
-                pulse = 0.86 + 0.14 * (math.sin(self._sleep_phase) + 1) / 2
-                specs = [
-                    (190, "#1677ff", 0.20),
-                    (145, "#22d3ee", 0.13),
-                    (108, "#1677ff", 0.09),
-                ]
-                for radius, color, alpha in specs:
-                    mixed = self._blend_hex("#030712", color, alpha * strength * pulse)
-                    canvas.create_oval(
-                        cx-radius, cy-radius*0.62, cx+radius, cy+radius*0.62,
-                        fill=mixed, outline="", tags=("sleep_glow",)
-                    )
-            elif effect == "pulse_glow":
-                pulse = (math.sin(self._sleep_phase * 1.45) + 1) / 2
-                radius = 125 + 48 * pulse
-                for step, color in enumerate(("#1677ff", "#22d3ee", "#4f8cff")):
-                    r = radius + step * 34
-                    alpha = (0.20 - step * 0.045) * strength * (0.55 + 0.45 * pulse)
-                    mixed = self._blend_hex("#030712", color, alpha)
-                    canvas.create_oval(
-                        cx-r, cy-r*0.58, cx+r, cy+r*0.58,
-                        fill=mixed, outline="", tags=("sleep_glow",)
-                    )
-            elif effect == "aurora":
-                offsets = (
-                    (-105, -5, "#1677ff", 178, 92),
-                    (105, 8, "#22d3ee", 170, 88),
-                    (-30, 42, "#6d5dfc", 142, 74),
-                )
-                sway = math.sin(self._sleep_phase) * 24
-                for index, (ox, oy, color, rx, ry) in enumerate(offsets):
-                    x = cx + ox + sway * (1 if index % 2 == 0 else -0.7)
-                    y = cy + oy + math.cos(self._sleep_phase + index) * 8
-                    alpha = (0.15 - index * 0.018) * strength
-                    mixed = self._blend_hex("#030712", color, alpha)
-                    canvas.create_oval(
-                        x-rx, y-ry, x+rx, y+ry,
-                        fill=mixed, outline="", tags=("sleep_glow",)
-                    )
-            elif effect == "liquid_motion":
-                # Vloeiende neonbanden, geïnspireerd op liquid-gradient en
-                # diagonale motion-art. De compositie is eigen WakeSync-design:
-                # donkere basis, koele cyan/blauw/paarse lagen en één warme
-                # oranje accentstroom. We gebruiken alleen Canvas-vormen zodat
-                # de animatie licht genoeg blijft voor de Raspberry Pi 5.
-                base = "#030712"
-                phase = self._sleep_phase
-                ribbons = (
-                    # (basis-y, amplitude, fase, breedte, hoofdkleur, accent)
-                    (80, 34, 0.0, 78, "#7c3aed", "#e100ff"),
-                    (200, 52, 1.3, 92, "#0b5cff", "#22d3ee"),
-                    (335, 42, 2.4, 72, "#1d4ed8", "#6d5dfc"),
-                    (430, 30, 3.2, 46, "#f59e0b", "#ff5f2e"),
-                )
-                for index, (base_y, amp, offset, width, main, accent) in enumerate(ribbons):
-                    points: list[float] = []
-                    # Ruim buiten de canvas beginnen/eindigen zodat er geen
-                    # harde lijnranden zichtbaar zijn.
-                    for step in range(-2, 11):
-                        x = step * 92 + math.sin(phase * 0.52 + offset) * 24
-                        wave = math.sin(step * 0.72 + phase * (0.62 + index * 0.05) + offset)
-                        wave2 = math.cos(step * 0.31 - phase * 0.42 + offset) * 0.38
-                        y = base_y + amp * (wave + wave2)
-                        # Een lichte diagonale richting zoals de referentie,
-                        # zonder een bestaande compositie te kopiëren.
-                        y += (x - SCREEN_WIDTH / 2) * (0.055 if index % 2 == 0 else -0.04)
-                        points.extend((x, y))
+        try:
+            canvas.delete("sleep_glow")
+            self._sleep_phase = (
+                self._sleep_phase
+                + (0.095 if effect == "liquid_motion" else 0.075)
+            ) % (2 * math.pi)
 
-                    outer = self._blend_hex(base, main, 0.18 * strength)
-                    middle = self._blend_hex(base, main, 0.58 * strength)
-                    core = self._blend_hex(base, accent, 0.82 * strength)
-                    canvas.create_line(
-                        *points,
-                        fill=outer,
-                        width=max(18, round(width * 1.38)),
-                        smooth=True,
-                        splinesteps=24,
-                        capstyle="round",
-                        joinstyle="round",
-                        tags=("sleep_glow",),
-                    )
-                    canvas.create_line(
-                        *points,
-                        fill=middle,
-                        width=max(14, width),
-                        smooth=True,
-                        splinesteps=24,
-                        capstyle="round",
-                        joinstyle="round",
-                        tags=("sleep_glow",),
-                    )
-                    canvas.create_line(
-                        *points,
-                        fill=core,
-                        width=max(4, round(width * 0.17)),
-                        smooth=True,
-                        splinesteps=24,
-                        capstyle="round",
-                        joinstyle="round",
-                        tags=("sleep_glow",),
-                    )
+            if effect != "off" and intensity > 0 and not effect_disabled:
+                strength = intensity / 100.0
+                cx, cy = SCREEN_WIDTH / 2, 154
 
-                # Dunne contourlijnen geven het effect meer diepte en laten het
-                # aanvoelen als vloeibare lagen in plaats van simpele strepen.
-                for index in range(5):
-                    points = []
-                    for step in range(-1, 12):
-                        x = step * 76 + math.cos(phase * 0.48 + index) * 18
-                        y = (
-                            60
-                            + index * 90
-                            + math.sin(step * 0.65 + phase * 0.8 + index * 0.9)
-                            * (22 + index * 2)
+                if effect == "soft_glow":
+                    pulse = 0.86 + 0.14 * (
+                        math.sin(self._sleep_phase) + 1
+                    ) / 2
+                    specs = [
+                        (190, "#1677ff", 0.20),
+                        (145, "#22d3ee", 0.13),
+                        (108, "#1677ff", 0.09),
+                    ]
+                    for radius, color, alpha in specs:
+                        mixed = self._blend_hex(
+                            "#030712",
+                            color,
+                            alpha * strength * pulse,
                         )
-                        points.extend((x, y))
-                    contour_color = self._blend_hex(
-                        base,
-                        "#22d3ee" if index % 2 == 0 else "#6d5dfc",
-                        (0.26 + index * 0.02) * strength,
+                        canvas.create_oval(
+                            cx - radius,
+                            cy - radius * 0.62,
+                            cx + radius,
+                            cy + radius * 0.62,
+                            fill=mixed,
+                            outline="",
+                            tags=("sleep_glow",),
+                        )
+
+                elif effect == "pulse_glow":
+                    pulse = (math.sin(self._sleep_phase * 1.45) + 1) / 2
+                    radius = 125 + 48 * pulse
+                    for step, color in enumerate(
+                        ("#1677ff", "#22d3ee", "#4f8cff")
+                    ):
+                        r = radius + step * 34
+                        alpha = (
+                            (0.20 - step * 0.045)
+                            * strength
+                            * (0.55 + 0.45 * pulse)
+                        )
+                        mixed = self._blend_hex("#030712", color, alpha)
+                        canvas.create_oval(
+                            cx - r,
+                            cy - r * 0.58,
+                            cx + r,
+                            cy + r * 0.58,
+                            fill=mixed,
+                            outline="",
+                            tags=("sleep_glow",),
+                        )
+
+                elif effect == "aurora":
+                    offsets = (
+                        (-105, -5, "#1677ff", 178, 92),
+                        (105, 8, "#22d3ee", 170, 88),
+                        (-30, 42, "#6d5dfc", 142, 74),
                     )
-                    canvas.create_line(
-                        *points,
-                        fill=contour_color,
-                        width=2,
-                        smooth=True,
-                        splinesteps=20,
-                        tags=("sleep_glow",),
+                    sway = math.sin(self._sleep_phase) * 24
+                    for index, (ox, oy, color, rx, ry) in enumerate(
+                        offsets
+                    ):
+                        x = cx + ox + sway * (
+                            1 if index % 2 == 0 else -0.7
+                        )
+                        y = (
+                            cy
+                            + oy
+                            + math.cos(self._sleep_phase + index) * 8
+                        )
+                        alpha = (0.15 - index * 0.018) * strength
+                        mixed = self._blend_hex("#030712", color, alpha)
+                        canvas.create_oval(
+                            x - rx,
+                            y - ry,
+                            x + rx,
+                            y + ry,
+                            fill=mixed,
+                            outline="",
+                            tags=("sleep_glow",),
+                        )
+
+                elif effect == "liquid_motion":
+                    # Pi-veilige variant: drie banden, twee lagen per band,
+                    # tien controlepunten en bescheiden spline-resolutie.
+                    base = "#030712"
+                    phase = self._sleep_phase
+                    ribbons = (
+                        (105, 28, 0.0, 58, "#6d5dfc", "#22d3ee"),
+                        (255, 42, 1.4, 70, "#0b5cff", "#22d3ee"),
+                        (405, 30, 2.7, 54, "#1d4ed8", "#7c3aed"),
                     )
+                    for index, (
+                        base_y,
+                        amp,
+                        offset,
+                        width,
+                        main,
+                        accent,
+                    ) in enumerate(ribbons):
+                        points: list[float] = []
+                        for step in range(-1, 9):
+                            x = (
+                                step * 105
+                                + math.sin(phase * 0.45 + offset) * 18
+                            )
+                            wave = math.sin(
+                                step * 0.74
+                                + phase * (0.55 + index * 0.04)
+                                + offset
+                            )
+                            wave2 = (
+                                math.cos(
+                                    step * 0.33
+                                    - phase * 0.34
+                                    + offset
+                                )
+                                * 0.30
+                            )
+                            y = base_y + amp * (wave + wave2)
+                            y += (x - SCREEN_WIDTH / 2) * (
+                                0.045 if index % 2 == 0 else -0.035
+                            )
+                            points.extend((x, y))
+
+                        outer = self._blend_hex(
+                            base, main, 0.28 * strength
+                        )
+                        core = self._blend_hex(
+                            base, accent, 0.78 * strength
+                        )
+                        canvas.create_line(
+                            *points,
+                            fill=outer,
+                            width=max(18, width),
+                            smooth=True,
+                            splinesteps=8,
+                            capstyle="round",
+                            joinstyle="round",
+                            tags=("sleep_glow",),
+                        )
+                        canvas.create_line(
+                            *points,
+                            fill=core,
+                            width=max(5, round(width * 0.16)),
+                            smooth=True,
+                            splinesteps=8,
+                            capstyle="round",
+                            joinstyle="round",
+                            tags=("sleep_glow",),
+                        )
+
+                    # Twee contouren geven diepte zonder de veel zwaardere
+                    # vijf-contourvariant uit v10.
+                    for index in range(2):
+                        points = []
+                        for step in range(-1, 10):
+                            x = (
+                                step * 92
+                                + math.cos(phase * 0.38 + index) * 15
+                            )
+                            y = (
+                                155
+                                + index * 175
+                                + math.sin(
+                                    step * 0.62
+                                    + phase * 0.65
+                                    + index * 1.2
+                                )
+                                * 20
+                            )
+                            points.extend((x, y))
+                        contour_color = self._blend_hex(
+                            base,
+                            "#22d3ee" if index == 0 else "#6d5dfc",
+                            0.23 * strength,
+                        )
+                        canvas.create_line(
+                            *points,
+                            fill=contour_color,
+                            width=2,
+                            smooth=True,
+                            splinesteps=6,
+                            tags=("sleep_glow",),
+                        )
+
+                try:
+                    canvas.tag_lower("sleep_glow")
+                except Exception:
+                    pass
+
+            if not effect_disabled:
+                self._sleep_render_failures = 0
+        except Exception:
+            self._sleep_render_failures += 1
+            log.exception(
+                "slaapeffect renderen faalde; frame wordt veilig overgeslagen"
+            )
             try:
-                canvas.tag_lower("sleep_glow")
+                canvas.delete("sleep_glow")
             except Exception:
                 pass
 
-        # Rustig genoeg voor een Pi 5 en vloeiend genoeg voor het 5-inch scherm.
-        try:
-            self._sleep_animation_job = self._root.after(80, self._animate_sleep_glow)
-        except Exception:
-            self._sleep_animation_job = None
+        if self._sleeping:
+            try:
+                self._sleep_animation_job = self._root.after(
+                    interval_ms,
+                    self._animate_sleep_glow,
+                )
+            except Exception:
+                self._sleep_animation_job = None
 
     def _refresh_sleep_content(self) -> None:
         if not self._sleeping:
@@ -2618,24 +3117,46 @@ def _show_startup_splash(root: Any) -> None:
     try:
         import tkinter as tk
         from PIL import Image, ImageTk
+        from wekker import __version__
+
         splash = tk.Frame(root, bg="#07111f")
         splash.place(x=0, y=0, relwidth=1, relheight=1)
 
-        logo_path = Path(__file__).resolve().parents[1] / "assets" / "wakesync-logo-dark.png"
+        logo_panel = tk.Frame(
+            splash,
+            bg="#f8fbff",
+            highlightbackground="#cfe5fb",
+            highlightthickness=1,
+            padx=12,
+            pady=8,
+        )
+        logo_panel.pack(pady=(105, 0))
+
+        logo_path = (
+            Path(__file__).resolve().parents[1]
+            / "assets"
+            / "wakesync-logo.png"
+        )
         image = Image.open(logo_path).convert("RGBA")
         image.thumbnail((360, 150), Image.Resampling.LANCZOS)
         photo = ImageTk.PhotoImage(image)
-        logo = tk.Label(splash, image=photo, bg="#07111f", bd=0)
+        logo = tk.Label(logo_panel, image=photo, bg="#f8fbff", bd=0)
         logo.image = photo
-        logo.pack(pady=(115, 0))
+        logo.pack()
 
         tk.Label(
-            splash, text="WakeSync v10 starten…", font=("DejaVu Sans", 11, "bold"),
-            fg="#8ea2bd", bg="#07111f",
+            splash,
+            text=f"WakeSync v{__version__} starten…",
+            font=("DejaVu Sans", 11, "bold"),
+            fg="#8ea2bd",
+            bg="#07111f",
         ).pack(pady=(16, 0))
         tk.Label(
-            splash, text="Klok • agenda • alarm • online beheer",
-            font=("DejaVu Sans", 9), fg="#526176", bg="#07111f",
+            splash,
+            text="Klok • agenda • alarm • online beheer",
+            font=("DejaVu Sans", 9),
+            fg="#526176",
+            bg="#07111f",
         ).pack(pady=(7, 0))
         root.update_idletasks()
         root.update()

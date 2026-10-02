@@ -268,11 +268,11 @@ def test_alarm_wizard_hoek_mapping_is_stabiel():
     assert TouchApp._angle_value(564, 264, 400, 264, 60) == 15
 
 
-def test_myx_provider_gebruikt_v10_user_agent():
+def test_myx_provider_gebruikt_v10_1_user_agent():
     source = (
         Path(__file__).parents[2] / "src" / "wekker" / "agenda" / "myx.py"
     ).read_text(encoding="utf-8")
-    assert '"User-Agent": "WakeSync/10.0.0"' in source
+    assert '"User-Agent": "WakeSync/10.1.0"' in source
 
 
 def test_privacyvriendelijke_room_hints_zien_bronveld_zonder_feed_url():
@@ -289,3 +289,164 @@ def test_privacyvriendelijke_room_hints_zien_bronveld_zonder_feed_url():
     assert "LVM-E2.12" in hints["room_candidates"]
     assert "LVM-E2.14" in hints["room_candidates"]
     assert "aventus.myx.nl" not in str(hints)
+
+
+def test_v10_1_datumalarm_is_eenmalig_en_keert_niet_dagelijks_terug():
+    settings = Settings.from_dict(
+        {
+            "alarm": {
+                "alarms": [
+                    {
+                        "id": "presentatie",
+                        "time": "07:05",
+                        "date": "2026-10-03",
+                        "enabled": True,
+                    }
+                ]
+            }
+        }
+    )
+    clock = FakeClock(datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc))
+    core = AlarmClock(settings, clock, MockSpeaker(), MockLamp())
+
+    assert core.next_alarm() == datetime(
+        2026, 10, 3, 7, 5, tzinfo=timezone.utc
+    )
+    clock.set(datetime(2026, 10, 3, 7, 5, tzinfo=timezone.utc))
+    assert core.tick() is AlarmState.RINGING
+    assert core.dismiss(physical=True)
+
+    clock.set(datetime(2026, 10, 4, 7, 0, tzinfo=timezone.utc))
+    core.tick()
+    assert core.next_alarm() is None
+
+
+def test_v10_1_datumalarm_roundtrip_en_validatie():
+    settings = Settings.from_dict(
+        {
+            "alarm": {
+                "alarms": [
+                    {
+                        "id": "eenmalig",
+                        "time": "08:15",
+                        "date": "2026-10-31",
+                        "enabled": True,
+                    }
+                ]
+            }
+        }
+    )
+    assert settings.alarm.alarms[0].date == "2026-10-31"
+    restored = Settings.from_dict(settings.to_dict())
+    assert restored.alarm.alarms[0].date == "2026-10-31"
+
+    import pytest
+    from wekker.settings import SettingsError
+
+    with pytest.raises(SettingsError):
+        Settings.from_dict(
+            {
+                "alarm": {
+                    "alarms": [
+                        {
+                            "id": "fout",
+                            "time": "08:15",
+                            "date": "2026-02-31",
+                            "enabled": True,
+                        }
+                    ]
+                }
+            }
+        )
+
+
+def test_v10_1_demo_sneltoets_en_pi_veilige_liquid_motion_zijn_aanwezig():
+    source = (
+        Path(__file__).parents[2] / "src" / "wekker" / "gui" / "app.py"
+    ).read_text(encoding="utf-8")
+    assert 'if keysym == "p":' in source
+    assert '145 if effect == "liquid_motion" else 90' in source
+    assert "splinesteps=8" in source
+    assert "frame wordt veilig overgeslagen" in source
+
+
+def test_v10_1_liquid_motion_renderframe_blijft_in_eventloop():
+    from types import SimpleNamespace
+    from wekker.gui.app import TouchApp
+
+    class Canvas:
+        def __init__(self):
+            self.lines = 0
+        def delete(self, *_args):
+            return None
+        def create_line(self, *_args, **_kwargs):
+            self.lines += 1
+            return self.lines
+        def tag_lower(self, *_args):
+            return None
+
+    class Root:
+        def __init__(self):
+            self.after_calls = []
+        def after(self, delay, callback):
+            self.after_calls.append((delay, callback))
+            return "after-1"
+
+    app = TouchApp.__new__(TouchApp)
+    app._sleeping = True
+    app._sleep_animation_job = None
+    app._sleep_phase = 0.0
+    app._sleep_render_failures = 0
+    app._widgets = {"_overlay_sleep_canvas": Canvas()}
+    app._root = Root()
+    app._runtime = SimpleNamespace(
+        ctx=SimpleNamespace(
+            settings=Settings().update_from_dict(
+                {"display": {"sleep_effect": "liquid_motion"}}
+            )
+        )
+    )
+
+    app._animate_sleep_glow()
+    assert app._widgets["_overlay_sleep_canvas"].lines == 8
+    assert app._root.after_calls[0][0] == 145
+    assert app._sleep_render_failures == 0
+
+
+def test_v10_1_liquid_motion_renderfout_blokkeert_sleep_niet():
+    from types import SimpleNamespace
+    from wekker.gui.app import TouchApp
+
+    class BrokenCanvas:
+        def delete(self, *_args):
+            return None
+        def create_line(self, *_args, **_kwargs):
+            raise RuntimeError("gesimuleerde renderfout")
+        def tag_lower(self, *_args):
+            return None
+
+    class Root:
+        def __init__(self):
+            self.after_calls = []
+        def after(self, delay, callback):
+            self.after_calls.append((delay, callback))
+            return "after-error"
+
+    app = TouchApp.__new__(TouchApp)
+    app._sleeping = True
+    app._sleep_animation_job = None
+    app._sleep_phase = 0.0
+    app._sleep_render_failures = 0
+    app._widgets = {"_overlay_sleep_canvas": BrokenCanvas()}
+    app._root = Root()
+    app._runtime = SimpleNamespace(
+        ctx=SimpleNamespace(
+            settings=Settings().update_from_dict(
+                {"display": {"sleep_effect": "liquid_motion"}}
+            )
+        )
+    )
+
+    app._animate_sleep_glow()
+    assert app._sleep_render_failures == 1
+    assert app._root.after_calls[0][0] == 145

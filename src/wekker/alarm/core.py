@@ -1,6 +1,6 @@
 """Centrale WakeSync-alarmstate-machine.
 
-v10 ondersteunt meerdere dagelijkse alarmprofielen. De kern blijft bewust
+v10.1 ondersteunt meerdere dagelijkse én datumgebonden alarmprofielen. De kern blijft bewust
 onafhankelijk van Tkinter en netwerkverkeer. Per profiel worden trigger-,
 dismiss- en gemiststatus apart bijgehouden, zodat het stoppen van een vroeg
 alarm een later alarm op dezelfde dag niet blokkeert.
@@ -36,7 +36,7 @@ class IllegalTransitionError(Exception):
 
 
 class AlarmClock:
-    """Betrouwbare wekker-core met meerdere dagelijkse alarmprofielen."""
+    """Betrouwbare wekker-core met dagelijkse en datumgebonden alarmprofielen."""
 
     def __init__(
         self,
@@ -261,7 +261,23 @@ class AlarmClock:
             for profile in self._profiles():
                 if not profile.enabled:
                     continue
+
                 scheduled = self._trigger_time(ref, profile)
+
+                # Datumgebonden alarmen zijn eenmalig. Ze worden nooit stilzwijgend
+                # naar "morgen" doorgeschoven nadat de gekozen datum voorbij is.
+                if profile.date:
+                    done = (
+                        self._last_trigger_dates.get(profile.id) == profile.date
+                        or self._dismissed_dates.get(profile.id) == profile.date
+                        or self._missed_dates.get(profile.id) == profile.date
+                    )
+                    if not done and scheduled > ref:
+                        candidates.append(scheduled)
+                    elif not done and scheduled <= ref <= scheduled + RECOVERY_WINDOW:
+                        candidates.append(scheduled)
+                    continue
+
                 already_done = (
                     self._last_trigger_dates.get(profile.id) == today
                     or self._dismissed_dates.get(profile.id) == today
@@ -291,14 +307,33 @@ class AlarmClock:
 
     # -- selectie / planning --------------------------------------------
     def _trigger_time(self, now: datetime, profile: AlarmProfile) -> datetime:
+        """Geef de geplande datetime in dezelfde tijdzone als ``now``."""
         hour, minute = map(int, profile.time.split(":"))
+        if profile.date:
+            year, month, day = map(int, profile.date.split("-"))
+            return now.replace(
+                year=year,
+                month=month,
+                day=day,
+                hour=hour,
+                minute=minute,
+                second=0,
+                microsecond=0,
+            )
         return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+    @staticmethod
+    def _runs_on_day(profile: AlarmProfile, day_iso: str) -> bool:
+        """Dagelijkse alarmen lopen elke dag; datumalarmen alleen op hun datum."""
+        return profile.date is None or profile.date == day_iso
 
     def _find_due_profile(self, now: datetime) -> AlarmProfile | None:
         today = now.date().isoformat()
         candidates: list[tuple[datetime, AlarmProfile]] = []
         for profile in self._profiles():
             if not profile.enabled:
+                continue
+            if not self._runs_on_day(profile, today):
                 continue
             if self._last_trigger_dates.get(profile.id) == today:
                 continue
@@ -315,6 +350,8 @@ class AlarmClock:
         for profile in self._profiles():
             if profile.id == active_id or not profile.enabled:
                 continue
+            if not self._runs_on_day(profile, today):
+                continue
             if self._last_trigger_dates.get(profile.id) == today:
                 continue
             if self._dismissed_dates.get(profile.id) == today:
@@ -330,6 +367,8 @@ class AlarmClock:
         missed_now: list[tuple[datetime, AlarmProfile]] = []
         for profile in self._profiles():
             if not profile.enabled:
+                continue
+            if not self._runs_on_day(profile, today):
                 continue
             if self._last_trigger_dates.get(profile.id) == today:
                 continue
@@ -367,6 +406,8 @@ class AlarmClock:
         """
         today = now.date().isoformat()
         for profile in self._profiles():
+            if not self._runs_on_day(profile, today):
+                continue
             if self._missed_dates.get(profile.id) != today:
                 continue
             if now < self._trigger_time(now, profile):

@@ -90,6 +90,7 @@ def test_v10_cloud_roundtrip_met_meerdere_alarmen_en_liquid_motion(tmp_path: Pat
                 {
                     "id": "weekend",
                     "time": "09:10",
+                    "date": "2026-10-04",
                     "enabled": False,
                     "snooze_minutes": 10,
                     "sound": "beep",
@@ -143,6 +144,7 @@ def test_v10_cloud_roundtrip_met_meerdere_alarmen_en_liquid_motion(tmp_path: Pat
     assert pulled["ok"] is True
     assert len(pulled["settings"]["alarm"]["alarms"]) == 2
     assert pulled["settings"]["alarm"]["alarms"][1]["id"] == "weekend"
+    assert pulled["settings"]["alarm"]["alarms"][1]["date"] == "2026-10-04"
     assert pulled["settings"]["display"]["sleep_effect"] == "liquid_motion"
 
 
@@ -174,3 +176,14 @@ def test_v10_cloud_weigert_teveel_alarmprofielen(tmp_path: Path):
     )
     assert "Status: 400 Bad Request" in raw
     assert payload["ok"] is False
+
+
+def test_v10_1_web_tabs_gebruiken_csp_nonce_en_no_js_fallback():
+    script = Path(__file__).parents[2] / "deploy" / "cloud" / "test2.pl"
+    source = script.read_text(encoding="utf-8")
+    assert "script-src 'nonce-$nonce'" in source
+    assert '<script nonce="$nonce">' in source
+    assert "document.documentElement.classList.add('js')" in source
+    assert ".settings-panel{display:block}" in source
+    assert ".js .settings-panel{display:none}" in source
+    assert "name=\"alarm_date\"" in source

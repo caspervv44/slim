@@ -1,6 +1,6 @@
-# WakeSync v10
+# WakeSync v10.1
 
-WakeSync v10 bouwt voort op v9 met een scherper C9-logo, een vernieuwde Nothing-OS-geïnspireerde alarmworkflow, meerdere alarmen, een extra Liquid Motion-slaapeffect en robuustere MyX/iCalendar-lokaalverwerking.
+WakeSync v10.1 bouwt voort op v10 met het exact aangeleverde C9-logo, datumalarmen, een dragbare klokwijzer met live tijd, smooth toggles, een lichtere Liquid Motion-renderloop, de P-sneltoets voor slaapstand en een nonce-gebaseerde reparatie van de online beheer-tabs.
 
 Belangrijk: de automatische touch-check/touch-reparatie blijft buiten de productsoftware. De fysieke ADS7846/Wayland-touchkwestie wordt afzonderlijk onderzocht.
 
@@ -22,6 +22,17 @@ plaats van een streepje te tonen.
 WakeSync is een Raspberry Pi 5-schoolwekker met een 5-inch 800×480-interface,
 MyX/iCalendar-rooster, online beheer via `veendomain.nl` en een veilige
 software-updater.
+
+## Wat v10.1 verandert
+
+- Het officiële logo gebruikt exact de aangeleverde vorm; thema's passen hun omgeving aan in plaats van de logokleuren te wijzigen.
+- Een nieuw alarm kan eerst een datum of **Dagelijks** kiezen en daarna uur/minuten.
+- De klokwijzer volgt dragbewegingen en de digitale tijd erboven loopt live mee.
+- Alarm-/speaker-/lamp-schakelaars gebruiken smooth touchvriendelijke toggles.
+- `P` zet de GUI direct in slaapstand voor demonstraties.
+- Liquid Motion gebruikt minder splinepunten/lagen en blijft bij een renderfout uit de weg van de Tk-eventloop.
+- `test2.pl` gebruikt een CSP-nonce voor de tab-JavaScript; zonder JavaScript blijven de beheerpanelen als fallback zichtbaar.
+- Het primaire webalarm ondersteunt optioneel een ISO-datum (`YYYY-MM-DD`).
 
 ## Wat v10 verandert
 
@@ -81,11 +92,11 @@ via:
 
 `https://veendomain.nl/klok/test2.pl`
 
-Plaats voor v10 ook `deploy/cloud/test2.pl` op de WAMP-server. De health-URL:
+Plaats voor v10.1 ook `deploy/cloud/test2.pl` op de WAMP-server. De health-URL:
 
 `https://veendomain.nl/klok/test2.pl?health=1`
 
-moet `service: "wakesync"` en `version: 10` melden.
+moet `service: "wakesync"`, `version: 10` en `release: "10.1.0"` melden.
 
 ## Online beheer
 
@@ -126,7 +137,7 @@ aan zowel **Vandaag** als **Agenda**.
 
 ## Touchscreen
 
-WakeSync v10 voert geen automatische touchcheck of automatische touchreparatie
+WakeSync v10.1 voert geen automatische touchcheck of automatische touchreparatie
 meer uit in de productsoftware. De ADS7846-controller kan door Linux zichtbaar
 zijn terwijl de grafische bediening nog niet werkt. Dit hardware/Wayland-
 probleem wordt apart onderzocht zodat de app geen misleidende status toont.
@@ -171,7 +182,7 @@ python -m pytest -q
 perl -c deploy/cloud/test2.pl
 ```
 
-De v10-regressietests dekken onder andere:
+De v10.1-regressietests dekken onder andere:
 
 - een dag met vijf lessen waarbij 15:30–17:00 zichtbaar moet blijven;
 - `LOCATION:-`/`—` met lokaal in Xedule-beschrijving;

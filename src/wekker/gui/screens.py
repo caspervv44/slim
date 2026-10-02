@@ -140,6 +140,7 @@ class AlarmItemData:
     id: str
     time: str
     enabled: bool
+    date: str | None = None
     day_label: str = "Morgen"
     snooze_minutes: int = 9
     sound: str = "beep"
@@ -388,6 +389,7 @@ def alarm_layout(data: AlarmScreenData) -> dict:
             "id": item.id,
             "time": item.time,
             "enabled": item.enabled,
+            "date": item.date,
             "day_label": item.day_label,
             "snooze_minutes": item.snooze_minutes,
             "sound": item.sound,

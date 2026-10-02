@@ -1,4 +1,4 @@
-# WakeSync v10 software-updater
+# WakeSync v10.1 software-updater
 
 ## Kanaal
 
@@ -49,8 +49,8 @@ binnen de ingestelde veiligheidsmarge vlak vóór het alarm.
 
 ## Release publiceren
 
-Voor v10 hoort zowel `pyproject.toml` als `wekker.__version__` `10.0.0` te
-bevatten. Publiceer daarna een GitHub Release met bijvoorbeeld tag `v10.0.0`.
+Voor v10.1 hoort zowel `pyproject.toml` als `wekker.__version__` `10.1.0` te
+bevatten. Publiceer daarna een GitHub Release met bijvoorbeeld tag `v10.1.0`.
 
 Bij voorkeur bevat de Release een ZIP-asset en een SHA-256-bestand. Zonder
 eigen ZIP-asset gebruikt WakeSync de vastgepinde GitHub-release-zipball; er

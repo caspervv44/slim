@@ -9,6 +9,7 @@ van een geheim tonen — zie ``logging_config``.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from datetime import date as calendar_date
 from typing import Any
 
 ALLOWED_VISIBLE_FIELDS = frozenset(
@@ -54,6 +55,19 @@ def _check_time(value: str, veld: str) -> str:
     return f"{h:02d}:{m:02d}"
 
 
+def _check_optional_date(value: str | None, veld: str) -> str | None:
+    """Valideer een optionele ISO-datum voor een eenmalig alarm."""
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str):
+        raise SettingsError(f"{veld} moet YYYY-MM-DD of leeg zijn")
+    try:
+        parsed = calendar_date.fromisoformat(value)
+    except ValueError as exc:
+        raise SettingsError(f"{veld} moet een geldige YYYY-MM-DD datum zijn") from exc
+    return parsed.isoformat()
+
+
 def _check_bool(value: bool, veld: str) -> bool:
     # Strikt: JSON true/false worden Python-bools. Strings ("false") of
     # integers (0/1) zijn altijd een typefout en worden geweigerd, omdat een
@@ -73,14 +87,16 @@ def _check_range(value: int, veld: str, low: int, high: int) -> int:
 
 @dataclass
 class AlarmProfile:
-    """Eén zelfstandig dagelijks alarm.
+    """Eén zelfstandig alarm.
 
-    ``id`` blijft stabiel zodat meerdere alarmen dezelfde dag onafhankelijk
-    kunnen worden geactiveerd, gesnoozed en afgevinkt.
+    Zonder ``date`` is het alarm dagelijks. Met ``date`` (YYYY-MM-DD) is het
+    eenmalig op die kalenderdag. ``id`` blijft stabiel zodat meerdere alarmen
+    onafhankelijk kunnen worden geactiveerd, gesnoozed en afgevinkt.
     """
 
     id: str = "alarm-1"
     time: str = "07:30"
+    date: str | None = None
     enabled: bool = True
     snooze_minutes: int = 9
     sound: str = "beep"
@@ -96,6 +112,7 @@ class AlarmProfile:
         if not self.id or len(self.id) > 64:
             raise SettingsError("alarm-id moet 1–64 tekens lang zijn")
         self.time = _check_time(self.time, "alarm.time")
+        self.date = _check_optional_date(self.date, "alarm.date")
         self.enabled = _check_bool(self.enabled, "alarm.enabled")
         self.snooze_minutes = _check_range(
             self.snooze_minutes, "alarm.snooze_minutes", 1, 60
@@ -178,7 +195,8 @@ class AlarmSettings:
         if len(set(ids)) != len(ids):
             raise SettingsError("Alarm-id's moeten uniek zijn")
 
-        # Stabiele tijdvolgorde in opslag/UI.
+        # Houd de v10-volgorde op tijd/id intact. De AlarmClock bepaalt zelf
+        # welke datum daadwerkelijk als eerste gepland staat.
         normalized.sort(key=lambda p: (p.time, p.id))
         self.alarms = normalized
         self._mirror_primary()
