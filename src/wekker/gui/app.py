@@ -1,4 +1,4 @@
-"""WakeSync v10.1 fullscreen touchscreen-app voor 800×480 Raspberry Pi.
+"""WakeSync v10.1.1 fullscreen touchscreen-app voor 800×480 Raspberry Pi.
 
 De renderer blijft bewust Tkinter. Netwerk- en hardwaredetectietaken lopen op
 achtergrondthreads; widgets worden alleen op de Tk-hoofdthread gewijzigd.
@@ -436,16 +436,10 @@ class TouchApp:
         ).pack(side="left")
         photo = self._brand_photo()
         if photo is not None:
-            brand_panel = tk.Frame(
-                top,
-                bg=BRAND_BG,
-                highlightbackground=BRAND_BORDER,
-                highlightthickness=1,
-                padx=5,
-                pady=2,
+            brand_label = tk.Label(
+                top, image=photo, bg=BG, bd=0, highlightthickness=0
             )
-            brand_panel.pack(side="right", padx=(12, 0))
-            tk.Label(brand_panel, image=photo, bg=BRAND_BG, bd=0).pack()
+            brand_label.pack(side="right", padx=(12, 0))
             self._widgets["_brand_header_photo"] = photo
         if subtitle:
             tk.Label(
@@ -2143,16 +2137,8 @@ class TouchApp:
         qr_top.pack(fill="x", padx=28, pady=(9, 5))
         brand = self._brand_photo((118, 44))
         if brand is not None:
-            qr_brand_panel = tk.Frame(
-                qr_top,
-                bg=BRAND_BG,
-                highlightbackground=BRAND_BORDER,
-                highlightthickness=1,
-                padx=5,
-                pady=2,
-            )
-            qr_brand_panel.pack(side="left")
-            tk.Label(qr_brand_panel, image=brand, bg=BRAND_BG, bd=0).pack()
+            qr_brand_label = tk.Label(qr_top, image=brand, bg=BG, bd=0, highlightthickness=0)
+            qr_brand_label.pack(side="left")
             self._widgets["_overlay_qr_brand"] = brand
         tk.Label(
             qr_top, text="Online beheer", font=("DejaVu Sans", 18, "bold"),
@@ -2708,17 +2694,10 @@ class TouchApp:
         self._widgets["_overlay_sleep_canvas"] = canvas
 
         # Het aangeleverde C9-logo blijft in ieder thema exact gelijk.
-        # Een lichte merkkaart bewaakt het contrast zonder de logopixels
-        # opnieuw in te kleuren.
+        # De PNG is transparant, dus we tonen het logo direct zonder wit paneel
+        # zodat het niet meer vloekt op blauwe of donkere achtergronden.
         photo = self._brand_photo((340, 132))
         if photo is not None:
-            canvas.create_rectangle(
-                204, 82, 596, 214,
-                fill="#f8fbff",
-                outline="#cfe5fb",
-                width=2,
-                tags=("sleep_content", "sleep_brand_panel"),
-            )
             canvas.create_image(
                 SCREEN_WIDTH / 2,
                 148,
@@ -3122,15 +3101,8 @@ def _show_startup_splash(root: Any) -> None:
         splash = tk.Frame(root, bg="#07111f")
         splash.place(x=0, y=0, relwidth=1, relheight=1)
 
-        logo_panel = tk.Frame(
-            splash,
-            bg="#f8fbff",
-            highlightbackground="#cfe5fb",
-            highlightthickness=1,
-            padx=12,
-            pady=8,
-        )
-        logo_panel.pack(pady=(105, 0))
+        logo_wrap = tk.Frame(splash, bg="#07111f", padx=0, pady=0)
+        logo_wrap.pack(pady=(105, 0))
 
         logo_path = (
             Path(__file__).resolve().parents[1]
@@ -3140,7 +3112,7 @@ def _show_startup_splash(root: Any) -> None:
         image = Image.open(logo_path).convert("RGBA")
         image.thumbnail((360, 150), Image.Resampling.LANCZOS)
         photo = ImageTk.PhotoImage(image)
-        logo = tk.Label(logo_panel, image=photo, bg="#f8fbff", bd=0)
+        logo = tk.Label(logo_wrap, image=photo, bg="#07111f", bd=0, highlightthickness=0)
         logo.image = photo
         logo.pack()
 

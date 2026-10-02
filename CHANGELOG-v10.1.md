@@ -1,3 +1,9 @@
+# WakeSync v10.1.1
+
+- Verwijdert het witte merkpaneel achter het logo in de Raspberry Pi-GUI.
+- Het transparante officiële logo wordt nu direct getoond op splash, sleep-overlay en kopbalken.
+- Geen functionele wijziging aan `test2.pl`; bestandsnaam blijft `test2.pl`.
+
 # WakeSync v10.1.0
 
 ## Branding
