@@ -3138,6 +3138,11 @@ def _show_startup_splash(root: Any) -> None:
         return
 
 
+# [WakeSync MyX Agenda Hotfix] BEGIN
+from wekker.gui.agenda_fix import install_agenda_fix
+install_agenda_fix(TouchApp)
+# [WakeSync MyX Agenda Hotfix] EINDE
+
 def launch_gui(runtime: Any, fullscreen: bool = True) -> None:
     try:
         import tkinter as tk
