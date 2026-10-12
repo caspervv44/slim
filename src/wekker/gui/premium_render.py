@@ -398,41 +398,57 @@ def _title_and_sub(p: Painter,title:str,sub:str) -> None:
     p.text(28,111,sub,10,color=p.pal.muted)
 
 
-def _draw_today(p:Painter,layout:dict,now:datetime) -> None:
-    p.card(18,83,310,288,alpha=219)
-    p.clock(173,222,128,_safe(layout.get("time"),"07:30"),now,show_greeting=True)
+def _draw_today(p: Painter, layout: dict, now: datetime) -> None:
+    """Rustig startscherm met echte les-/alarmgegevens en temperatuurplaceholder."""
+    p.card(18, 83, 310, 289, alpha=224)
+    p.clock(173, 222, 127, _safe(layout.get("time"), "07:30"), now)
 
-    p.card(342,84,439,126)
-    p._icon("calendar",362,106,p.pal.accent)
-    p.text(381,94,_safe(layout.get("lesson_label"),"VOLGENDE LES"),11,bold=True)
-    p.text(363,124,_safe(layout.get("lesson_subject"),"Geen lessen"),22,bold=True,max_width=390)
-    meta=" · ".join(x for x in (layout.get("lesson_time"),layout.get("lesson_room")) if x)
-    p.text(364,169,meta or _safe(layout.get("agenda_status"),""),11,color=p.pal.muted,max_width=382)
+    p.card(342, 84, 439, 126)
+    p._icon("calendar", 364, 111, p.pal.accent)
+    p.text(387, 99, _safe(layout.get("lesson_label"), "VOLGENDE LES"), 11, bold=True)
+    p.text(363, 133, _safe(layout.get("lesson_subject"), "Geen lessen"), 22,
+           bold=True, max_width=385)
+    meta = " · ".join(str(v) for v in (
+        layout.get("lesson_time"), layout.get("lesson_room")
+    ) if v)
+    p.text(365, 178, meta or _safe(layout.get("agenda_status")), 11,
+           color=p.pal.muted, max_width=380)
     if layout.get("lesson_teacher"):
-        p.text(365,190,"Docent: "+str(layout["lesson_teacher"]),9,color=p.pal.muted,max_width=355)
-    p._icon("chevron",761,148,p.pal.accent)
-    p.hit(342,84,439,126,"nav","agenda")
+        p.text(365, 195, "Docent: " + str(layout["lesson_teacher"]), 9,
+               color=p.pal.muted, max_width=370)
+    p._icon("chevron", 762, 148, p.pal.accent)
+    p.hit(342, 84, 439, 126, "nav", "agenda")
 
-    p.card(342,222,439,125)
-    p._icon("bell",363,247,p.pal.accent)
-    p.text(382,236,"VOLGEND ALARM",11,bold=True)
-    p.text(363,272,_safe(layout.get("alarm")),29,bold=True,max_width=200)
-    p.pill(580,267,154,35,_safe(layout.get("alarm_day"),"Alarm"),font_size=10)
-    p.text(364,321,"Tik om je wekkers te beheren",10,color=p.pal.muted)
-    p.hit(342,222,439,125,"nav","alarm")
+    p.card(342, 222, 439, 126)
+    p._icon("bell", 364, 252, p.pal.accent)
+    p.text(387, 239, "VOLGEND ALARM", 11, bold=True)
+    p.text(363, 276, _safe(layout.get("alarm")), 29, bold=True, max_width=186)
+    p.pill(573, 270, 159, 35, _safe(layout.get("alarm_day"), "Alarm"),
+           font_size=10)
+    p.text(363, 324, "Tik om je alarmen te beheren", 10, color=p.pal.muted)
+    p._icon("chevron", 762, 289, p.pal.accent)
+    p.hit(342, 222, 439, 126, "nav", "alarm")
 
-    p.artwork_card(18,383,310,79,darken=.42)
-    p._icon("sun",43,414,p.pal.accent_alt)
-    p.text(62,398,"EEN NIEUWE DAG",10,color=p.pal.text if not p.pal.dark else "#FFFFFF",bold=True)
-    p.text(62,422,"Rustig beginnen. Sterk eindigen.",10,color=p.pal.text if not p.pal.dark else "#FFFFFF")
-    p.card(342,359,439,103,alpha=235)
-    p.text(363,372,"WAKE SYNC",10,bold=True,color=p.pal.accent)
-    p.text(363,395,"Jouw dag, in balans.",17,bold=True)
-    p.text(363,428,_safe(layout.get("agenda_status"),"Rooster beschikbaar"),
-           10,color=p.pal.muted,max_width=385)
-    if layout.get("notice"):
-        p.text(363,446,str(layout["notice"]),10,color=p.pal.accent_alt,max_width=382)
+    # Drie compacte informatietegels zonder motiverende teksten of fictief weer.
+    p.card(18, 384, 244, 78, alpha=233)
+    p._icon("sun", 42, 414, p.pal.accent_alt)
+    p.text(60, 399, "TEMPERATUUR", 9, color=p.pal.muted, bold=True)
+    p.text(60, 423, "--", 22, bold=True)
+    p.text(109, 431, "°C", 10, color=p.pal.muted)
 
+    p.card(273, 384, 242, 78, alpha=233)
+    p._icon("calendar", 294, 414, p.pal.accent_alt)
+    p.text(314, 399, "VANDAAG", 9, color=p.pal.muted, bold=True)
+    p.text(314, 421, _safe(layout.get("agenda_status"), "Agenda gereed"),
+           12, bold=True, max_width=185)
+    p.hit(273, 384, 242, 78, "nav", "agenda")
+
+    p.artwork_card(527, 384, 254, 78, darken=.57)
+    p._icon("moon", 553, 413, p.pal.accent_alt)
+    text_color = p.pal.text if not p.pal.dark else "#FFFFFF"
+    p.text(574, 398, "SLAAPSTAND", 9, color=text_color, bold=True)
+    p.text(574, 421, "Druk op P om te bekijken", 11, color=text_color,
+           max_width=185)
 
 def _draw_agenda(p:Painter,layout:dict,now:datetime) -> None:
     p.card(18,82,535,52)
@@ -617,3 +633,221 @@ def render_screen(layout:dict,theme:str,now:datetime,asset_dir:Path,
     elif screen=="settings":
         _draw_settings(p,layout,now)
     return p.finish()
+
+
+# ---------------------------------------------------------------------------
+# Uitgebreide themavensters voor de instellingen en bestaande alarmprofielen
+# ---------------------------------------------------------------------------
+
+def _detail_top(p: Painter, title: str, subtitle: str) -> None:
+    p.card(18, 14, 764, 55, alpha=245)
+    p.pill(29, 23, 113, 36, "‹ Terug", font_size=12)
+    p.hit(29, 18, 118, 45, "close-detail")
+    p.text(164, 27, title, 18, bold=True, max_width=400)
+    p.text(164, 50, subtitle, 9, color=p.pal.muted, max_width=385)
+    p._icon("settings", 753, 41, p.pal.accent)
+
+
+def _detail_setting(
+    p: Painter, x: int, y: int, w: int, title: str, value: str,
+    icon: str, action: str, payload: str = "",
+) -> None:
+    p.card(x, y, w, 83, radius=14)
+    p._icon(icon, x + 23, y + 27, p.pal.accent)
+    p.text(x + 42, y + 13, title, 11, bold=True, max_width=w - 62)
+    p.text(x + 18, y + 48, value, 11, color=p.pal.muted, max_width=w - 38)
+    p._icon("chevron", x + w - 19, y + 56, p.pal.accent)
+    p.hit(x, y, w, 83, action, payload)
+
+
+def _format_sleep_after(seconds: int) -> str:
+    if seconds == 0:
+        return "Uit"
+    if seconds < 60:
+        return f"{seconds} seconden"
+    return f"{seconds // 60} minuten"
+
+
+def render_detail_screen(
+    kind: str, theme: str, now: datetime, asset_dir: Path,
+    *, settings: Any = None, item: dict[str, Any] | None = None,
+) -> tuple[Image.Image, list[HitTarget]]:
+    """Themagebonden en touchbedienbare alarmpagina en weergave-instellingen."""
+    p = Painter(theme, asset_dir, logo_path=None)
+    if kind not in {"display", "alarm"}:
+        raise ValueError("Onbekende detailweergave")
+    if kind == "display":
+        _detail_top(p, "Weergave & thema", "Kies een stijl en stel de slaapstand in")
+        p.artwork_card(18, 82, 274, 379, darken=.52)
+        # Een subtiele glasplaat bewaart contrast boven de illustratie.
+        p.rect((29, 100, 281, 172), p.pal.bg, 12, 200)
+        p.text(45, 113, "GESELECTEERD THEMA", 10, color=p.pal.accent_alt, bold=True)
+        p.text(45, 139, THEME_TITLES[p.theme], 18, bold=True,
+               max_width=222)
+        p.text(38, 333, "Kies een thema", 10, bold=True,
+               color="#FFFFFF" if p.pal.dark else p.pal.text)
+        for i, theme_id in enumerate(THEME_IDS):
+            x = 37 + i * 62
+            pal = PALETTES[theme_id]
+            p.rect((x, 365, x + 51, 415), pal.card, 10, 255,
+                   pal.accent if p.theme == theme_id else p.pal.muted)
+            p.circle(x + 25, 390, 9, pal.accent)
+            p.hit(x, 360, 54, 58, "theme", theme_id)
+        p.text(38, 429, "Van blauw tot warm amber", 10,
+               color="#FFFFFF" if p.pal.dark else p.pal.text)
+
+        locale = settings.locale
+        display = settings.display
+        timezone_name = str(locale.timezone).replace("Europe/", "").replace("_", " ")
+        sleep_effect_name = dict((
+            ("off", "Uit"), ("soft_glow", "Zachte gloed"),
+            ("pulse_glow", "Pulserende gloed"), ("aurora", "Aurora"),
+            ("liquid_motion", "Liquid Motion"),
+        )).get(display.sleep_effect, display.sleep_effect)
+        view_name = dict((
+            ("logo", "Alleen logo"), ("logo_time", "Logo en tijd"),
+            ("logo_time_date", "Logo, tijd en datum"),
+        )).get(display.sleep_view, str(display.sleep_view))
+        _detail_setting(p, 307, 82, 227, "Tijdzone", timezone_name,
+                        "clock", "next-timezone")
+        _detail_setting(p, 546, 82, 237, "Tijdsnotatie",
+                        "24 uur" if locale.time_format == "24h" else "12 uur",
+                        "clock", "time-format")
+        _detail_setting(p, 307, 176, 227, "Slaapstand na",
+                        _format_sleep_after(int(display.sleep_after_seconds)),
+                        "moon", "next-sleep-after")
+        _detail_setting(p, 546, 176, 237, "Slaapscherm toont",
+                        view_name, "moon", "next-sleep-view")
+        _detail_setting(p, 307, 270, 227, "Slaapeffect", sleep_effect_name,
+                        "sun", "next-sleep-effect")
+        _detail_setting(p, 546, 270, 237, "Gloedsterkte",
+                        f"{int(display.sleep_glow_intensity)}%", "sun",
+                        "next-glow")
+        _detail_setting(p, 307, 364, 227, "Helderheid",
+                        f"{int(display.brightness)}%", "sun", "next-brightness")
+        _detail_setting(p, 546, 364, 237, "Sleepscreen testen",
+                        "Druk op P", "moon", "preview-sleep")
+    else:
+        if item is None:
+            raise ValueError("Alarmgegevens ontbreken")
+        _detail_top(p, "Alarm aanpassen", "Alle bestaande alarmopties in één stijl")
+        p.artwork_card(18, 82, 274, 379, darken=.62)
+        p.rect((30, 100, 280, 230), p.pal.bg, 16, 206)
+        p.text(155, 112, "GESELECTEERD ALARM", 10, color=p.pal.accent_alt,
+               bold=True, anchor="mt")
+        p.text(155, 151, _safe(item.get("time"), "07:30"), 46, bold=True,
+               anchor="mt", max_width=230)
+        p.text(155, 211, _safe(item.get("day_label"), "Dagelijks"), 11,
+               color=p.pal.muted, anchor="mm")
+        p.pill(48, 254, 214, 34,
+               "Ingeschakeld" if item.get("enabled") else "Uitgeschakeld",
+               active=bool(item.get("enabled")), font_size=11)
+        p.hit(44, 248, 220, 44, "alarm-enabled")
+        p.pill(42, 351, 228, 34, "Geluid testen", font_size=11)
+        p.hit(39, 345, 232, 46, "test-audio")
+        p.pill(42, 401, 228, 35, "Alarm verwijderen", font_size=11,
+               bg=p.pal.card, fg="#F38A92" if p.pal.dark else "#BA3039")
+        p.hit(38, 396, 238, 47, "alarm-delete")
+
+        sound = str(item.get("sound", "beep")).capitalize()
+        _detail_setting(p, 307, 82, 227, "Snooze",
+                        f'{int(item.get("snooze_minutes", 9))} minuten',
+                        "clock", "alarm-snooze")
+        _detail_setting(p, 546, 82, 237, "Geluid", sound,
+                        "speaker", "alarm-sound")
+        _detail_setting(p, 307, 176, 227, "Speaker",
+                        "Aan" if item.get("speaker_enabled") else "Uit",
+                        "speaker", "alarm-speaker")
+        _detail_setting(p, 546, 176, 237, "Lamp",
+                        "Aan" if item.get("lamp_blink") else "Uit",
+                        "lamp", "alarm-lamp")
+        _detail_setting(p, 307, 270, 227, "Volume",
+                        f'{int(item.get("volume", 70))}% · tik voor +10',
+                        "speaker", "alarm-volume")
+        _detail_setting(p, 546, 270, 237, "Lamphelderheid",
+                        f'{int(item.get("lamp_brightness", 100))}%',
+                        "sun", "alarm-lamp-brightness")
+        pattern = dict(steady="Constant", blink="Knipperen", pulse="Pulseren").get(
+            str(item.get("blink_pattern", "blink")), "Knipperen"
+        )
+        _detail_setting(p, 307, 364, 227, "Lamppatroon", pattern,
+                        "lamp", "alarm-pattern")
+        _detail_setting(p, 546, 364, 237, "Opbouw",
+                        f'{int(item.get("ramp_up_seconds", 30))} seconden',
+                        "clock", "alarm-ramp")
+    return p.finish()
+
+
+def render_sleep_screen(
+    theme: str, now: datetime, asset_dir: Path,
+    *, logo_path: Path | None = None, time_text: str | None = None,
+    view: str = "logo_time_date", glow: int = 65,
+) -> Image.Image:
+    """Rustig 800×480-slaapscherm; de goedgekeurde C9-logopixels blijven intact.
+
+    Deze afbeelding wordt één keer aangelegd. De tijd wordt daarna in Tk
+    bijgewerkt; er is geen dure volledige renderloop tijdens slaapmodus.
+    """
+    theme = theme if theme in PALETTES else "midnight"
+    pal = PALETTES[theme]
+    source = _art_source(theme, str(asset_dir.resolve()))
+    if source is None:
+        source = Image.new("RGBA", (WIDTH, HEIGHT), pal.bg)
+    image = source.resize((WIDTH*SCALE, HEIGHT*SCALE), Image.Resampling.LANCZOS).convert("RGBA")
+    overlay_color = {
+        "midnight": (3, 8, 22, 115),
+        "ocean": (1, 7, 27, 102),
+        "light": (11, 24, 50, 170),
+        "amber": (13, 7, 10, 123),
+    }[theme]
+    image.alpha_composite(Image.new("RGBA", image.size, overlay_color))
+    d = ImageDraw.Draw(image, "RGBA")
+
+    def xy(v: float) -> int:
+        return round(v*SCALE)
+
+    accent = pal.accent
+    if theme == "light":
+        accent = "#9BCFFF"
+    # Ring of lijnaccent geeft de vier sleepscreens hun eigen karakter.
+    strength = max(0.0, min(1.0, int(glow)/100))
+    if theme in {"midnight", "amber"}:
+        radius = 134 if theme == "midnight" else 117
+        box = (xy(400-radius), xy(246-radius), xy(400+radius), xy(246+radius))
+        for width, alpha in ((19, 21), (11, 41), (3, 210)):
+            d.arc(box, 10, 350, fill=(*_rgb(accent), round(alpha*strength)),
+                  width=xy(width))
+    elif theme == "ocean":
+        d.arc((xy(260),xy(100),xy(540),xy(380)), 185, 355,
+              fill=(*_rgb("#60F6E4"), round(180*strength)), width=xy(3))
+        d.arc((xy(272),xy(111),xy(528),xy(369)), 20, 180,
+              fill=(*_rgb("#9F89FF"), round(130*strength)), width=xy(3))
+    else:
+        d.arc((xy(264),xy(108),xy(536),xy(380)), 20, 160,
+              fill=(*_rgb("#D1E4FC"), round(182*strength)), width=xy(2))
+
+    # Logoplaat altijd boven de klok, niet over de cijfers.
+    d.rounded_rectangle((xy(294),xy(24),xy(506),xy(91)),radius=xy(15),
+                        fill=(255,255,255,234))
+    if logo_path is not None and logo_path.is_file():
+        with Image.open(logo_path) as original:
+            logo = original.convert("RGBA")
+        logo.thumbnail((191*SCALE, 58*SCALE), Image.Resampling.LANCZOS)
+        image.alpha_composite(logo, ((image.width-logo.width)//2, xy(27)+(xy(61)-logo.height)//2))
+    else:
+        d.text((xy(400), xy(59)), "WakeSync", fill=(15,34,59,255),
+               font=_font(21, True), anchor="mm")
+
+    if view in {"logo_time", "logo_time_date"}:
+        shown = time_text if time_text is not None else now.strftime("%H:%M")
+        d.text((xy(400),xy(265)), str(shown),
+               font=_font(67 if len(shown)<=5 else 53,True), anchor="mm",
+               fill=(251,253,255,255),
+               stroke_width=xy(1), stroke_fill=(12,22,37,100))
+    if view == "logo_time_date":
+        day = f"{DAY_NAMES[now.weekday()].capitalize()} {now.day} {MONTH_NAMES[now.month]}"
+        d.text((xy(400),xy(329)), day, fill=(224,236,250,245),
+               font=_font(15), anchor="mm")
+    d.text((xy(400),xy(457)), "Tik op het scherm om te openen",
+           font=_font(9), fill=(225,238,252,177), anchor="mm")
+    return image.convert("RGB").resize((WIDTH,HEIGHT),Image.Resampling.LANCZOS)

@@ -32,6 +32,7 @@ from wekker.display.backlight import BacklightController
 from wekker.display.manager import DisplayManager
 from wekker.hardware.interfaces import Button, DisplayDriver, Lamp, Speaker
 from wekker.hardware.mock import MockButton, MockDisplay, MockLamp, MockSpeaker
+from wekker.hardware.audio import make_speaker
 from wekker.logging_config import setup_logging
 from wekker.settings import Settings, SettingsError, default_settings
 from wekker.storage import JsonStore, StorageError
@@ -84,7 +85,7 @@ def build_default(
             state_path=_sidecar(settings_path, ".wekker-cloud.json"),
         )
 
-    speaker, lamp = MockSpeaker(), MockLamp()
+    speaker, lamp = make_speaker(), MockLamp()
     display_driver = MockDisplay()
     button = MockButton()
     cache = AgendaCache(path=_sidecar(settings_path, ".wakesync-agenda-cache.json"))
