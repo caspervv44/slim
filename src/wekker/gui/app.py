@@ -3162,7 +3162,10 @@ def launch_gui(runtime: Any, fullscreen: bool = True) -> None:
         root.geometry(f"{SCREEN_WIDTH}x{SCREEN_HEIGHT}")
 
     _show_startup_splash(root)
-    app = TouchApp(root, runtime)
+    # [WakeSync Premium] BEGIN
+    from wekker.gui.premium import PremiumTouchApp
+    app = PremiumTouchApp(root, runtime)
+    # [WakeSync Premium] EINDE
     root.bind("<Escape>", lambda _e: app.stop())
     root.bind(
         "<F11>",
