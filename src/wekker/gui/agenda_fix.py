@@ -144,13 +144,21 @@ def install_agenda_fix(app_klasse: type) -> bool:
             # Dit werkt ook wanneer de ICS-cache pas NA het starten van de
             # GUI gevuld wordt: iedere normale render kan de volgende lesdag
             # vinden zodra de achtergrond-sync voltooid is.
+            # Na handmatig bladeren mag een lege dag, óók vandaag, gewoon
+            # zichtbaar blijven. Anders springt 12 oktober terug naar de
+            # eerstvolgende lesdag zodra er een nieuwe render plaatsvindt.
             bewust_vandaag = (
                 getattr(self, "_wakesync_handmatig_vandaag", None) == vandaag
+            )
+            handmatig_gebladerd = (
+                getattr(self, "_wakesync_agenda_handmatig_gebladerd_op", None)
+                == vandaag
             )
             if (
                 scherm == "agenda"
                 and geselecteerd == vandaag
                 and not bewust_vandaag
+                and not handmatig_gebladerd
                 and not context.cache.get_day(vandaag)
             ):
                 volgende = zoek_lesdag(context.cache, vandaag)
@@ -165,21 +173,19 @@ def install_agenda_fix(app_klasse: type) -> bool:
             log.exception("Agendadatum of volgende les bepalen niet gelukt")
             return data
 
-    def schuif_lesdag(self: Any, dagen: int) -> Any:
-        # De pijltjes gaan naar de vorige/volgende gevulde LESDAG, in plaats
-        # van tientallen lege dagen te vereisen. Zonder zo'n dag blijft het
-        # oorspronkelijke dag-voor-daggedrag beschikbaar.
-        if dagen in (-1, 1):
-            try:
-                context = self._runtime.ctx
-                huidig = getattr(self, "_agenda_day", None) or context.clock.now().date()
-                gevonden = zoek_lesdag(context.cache, huidig, dagen)
-                if gevonden is not None:
-                    self._agenda_day = gevonden
-                    self._agenda_page = 0
-                    return self.render()
-            except (AttributeError, TypeError, ValueError):
-                log.exception("Lesdag bladeren mislukt; oorspronkelijke navigatie gebruikt")
+    def schuif_kalenderdag(self: Any, dagen: int) -> Any:
+        """Blader door álle kalenderdagen, ook wanneer er geen les gepland is.
+
+        Het originele WakeSync-gedrag verplaatst exact 'dagen' dagen en
+        vernieuwt de pagina. De markering voorkomt dat een handmatig gekozen
+        lege 'vandaag'-pagina direct weer naar de volgende lesdag springt.
+        """
+        try:
+            self._wakesync_agenda_handmatig_gebladerd_op = (
+                self._runtime.ctx.clock.now().date()
+            )
+        except AttributeError:
+            pass
         return originele_shift(self, dagen)
 
     def terug_naar_vandaag(self: Any) -> Any:
@@ -192,7 +198,7 @@ def install_agenda_fix(app_klasse: type) -> bool:
         return originele_today(self)
 
     app_klasse._data = data_met_toekomst
-    app_klasse._shift_agenda_day = schuif_lesdag
+    app_klasse._shift_agenda_day = schuif_kalenderdag
     app_klasse._agenda_today = terug_naar_vandaag
     app_klasse._wakesync_agenda_fix_installed = True
     return True

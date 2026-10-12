@@ -129,13 +129,70 @@ def test_eerste_opening_agenda_toont_eerste_gevulde_lesdag(cache):
     assert app._agenda_page == 0
 
 
-def test_pijltjes_slaan_lege_lesdagen_over(cache):
+def test_pijltjes_bladeren_per_kalenderdag_ook_als_dag_leeg_is(cache):
     app = app_model(cache)
     app._go("agenda")
-    assert len(app._shift_agenda_day(1).agenda.rows) == 2
-    assert app._agenda_day == date(2026, 10, 19)
-    app._shift_agenda_day(-1)
     assert app._agenda_day == date(2026, 10, 15)
+
+    # Van de lesdag 15 naar 19 oktober geen sprong: elke datum wordt getoond.
+    for dag in (16, 17, 18):
+        data = app._shift_agenda_day(1)
+        assert app._agenda_day == date(2026, 10, dag)
+        assert not data.agenda.rows
+        assert app._agenda_page == 0
+
+    data = app._shift_agenda_day(1)
+    assert app._agenda_day == date(2026, 10, 19)
+    assert len(data.agenda.rows) == 2
+
+    for dag in (18, 17, 16, 15):
+        data = app._shift_agenda_day(-1)
+        assert app._agenda_day == date(2026, 10, dag)
+    assert len(data.agenda.rows) == 3
+
+
+def test_van_19_naar_9_okt_zonder_ontbrekende_dagen():
+    # Exact de gemelde situatie: alleen 19 t/m 23 oktober bevatten lessen.
+    cache = Cache({
+        f"2026-10-{dag:02d}": [les(dag, "Les")]
+        for dag in range(19, 24)
+    })
+    app = app_model(cache)
+    app._go("agenda")
+    assert app._agenda_day == date(2026, 10, 19)
+
+    for dag in range(18, 8, -1):
+        data = app._shift_agenda_day(-1)
+        assert app._agenda_day == date(2026, 10, dag)
+        assert not data.agenda.rows
+        if dag == 12:
+            # Een extra render (bijvoorbeeld een kloktick) mag geen
+            # automatische sprong naar 19 oktober veroorzaken.
+            assert app.render().agenda.day == "2026-10-12"
+            assert app._agenda_day == date(2026, 10, 12)
+
+
+def test_handmatig_bladeren_naar_vandaag_blijft_na_tick_en_tabwissel_staan():
+    cache = Cache({"2026-10-19": [les(19, "Wiskunde")]})
+    app = app_model(cache)
+    app._go("agenda")
+    assert app._agenda_day == date(2026, 10, 19)
+    for _ in range(7):
+        app._shift_agenda_day(-1)
+    assert app._agenda_day == TODAY
+    assert app.render().agenda.day == "2026-10-12"
+    app._go("main")
+    app._go("agenda")
+    assert app._agenda_day == TODAY
+
+
+def test_meerdere_dagen_per_actie_volgen_gewoon_timedelta(cache):
+    app = app_model(cache)
+    app._go("agenda")
+    app._shift_agenda_day(7)
+    assert app._agenda_day == date(2026, 10, 22)
+    app._shift_agenda_day(-14)
+    assert app._agenda_day == date(2026, 10, 8)
 
 
 def test_nu_is_echt_vandaag_en_wordt_niet_automatisch_omgezet(cache):
@@ -209,3 +266,25 @@ def test_niet_toegestane_richting(cache):
 
 def test_oude_testdummy_geen_crash():
     assert FIX.install_agenda_fix(type("Oud", (), {})) is False
+
+
+def test_verse_cache_na_handmatig_bezoek_vandaag_forceert_geen_sprong():
+    cache = Cache()
+    app = app_model(cache)
+    app._go("agenda")
+    app._shift_agenda_day(1)
+    app._shift_agenda_day(-1)
+    assert app._agenda_day == TODAY
+    cache.mapping["2026-10-19"] = [les(19, "Wiskunde")]
+    app.render()
+    assert app._agenda_day == TODAY
+
+
+def test_na_manuele_dagwissel_gaat_geen_privacydata_verloren(cache):
+    # De navigatielogica hoort uitsluitend de geselecteerde datum te wijzigen.
+    cache_copy = {key: list(value) for key, value in cache.mapping.items()}
+    app = app_model(cache)
+    app._go("agenda")
+    app._shift_agenda_day(-1)
+    app._shift_agenda_day(1)
+    assert cache.mapping == cache_copy
