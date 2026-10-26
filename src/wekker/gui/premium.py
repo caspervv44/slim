@@ -1,4 +1,4 @@
-"""WakeSync Premium v10.2: vier thema's, detailschermen en rustige slaapstand.
+"""WakeSync Premium v10.2.1: vier thema's, detailschermen en rustige slaapstand.
 
 De bestaande TouchApp blijft verantwoordelijk voor gegevens, acties en alarms.
 De premium-laag verandert uitsluitend de weergave; een Canvas blijft bestaan bij
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -78,6 +79,12 @@ class PremiumTouchApp(legacy.TouchApp):
             # Val terug op 2-arg basis (bv. StubApp in test_gui_kiosk die
             # via monkeypatch als basis wordt gebonden bij lazy import).
             super().__init__(root, runtime)  # type: ignore[misc]
+        # Een tweede start via de snelkoppeling vraagt dit venster naar voren.
+        # Geen kalibratiematrix of aangepaste touchcoördinaten in de applicatie.
+        self._premium_focus_file = os.environ.get("WAKESYNC_FOCUS_FILE", "")
+        self._premium_focus_seen = 0
+        if self._premium_focus_file:
+            self._root.after(700, self._premium_poll_focus)
 
     @property
     def _premium_assets(self) -> Path:
@@ -226,15 +233,56 @@ class PremiumTouchApp(legacy.TouchApp):
                 self._show_settings_section("cloud")
             elif action == "time-format":
                 self._toggle_time_format()
-            elif action == "settings":
-                if payload == "software":
-                    self._show_update_overlay()
-                elif payload == "diagnostics":
-                    self._show_settings_section("diagnostics")
+            elif action == "settings" and payload in {"software", "diagnostics"}:
+                self._premium_open_system_page(payload)
+            elif action in {"software", "diagnostics"}:
+                # Ook de vroegere rendereracties worden expliciet ondersteund.
+                self._premium_open_system_page(action)
+            else:
+                log.warning("Onbekende premium-actie: %s", action)
+                self._show_toast("Deze actie is niet beschikbaar", error=True)
         except Exception as exc:
             log.exception("Premium-touchactie '%s' faalde", action)
             self._show_toast("Actie kon niet worden uitgevoerd", error=True)
         return "break"
+
+    def _premium_poll_focus(self) -> None:
+        """Lees alleen ons eigen focusverzoek; geen signalen naar andere processen."""
+        try:
+            stamp = Path(self._premium_focus_file).stat().st_mtime_ns
+            if stamp > self._premium_focus_seen:
+                self._premium_focus_seen = stamp
+                if getattr(self, "_sleeping", False):
+                    self._wake_from_sleep()
+                self._root.deiconify()
+                self._root.lift()
+                self._root.focus_force()
+        except FileNotFoundError:
+            pass
+        except Exception:
+            log.debug("Venster activeren niet beschikbaar", exc_info=True)
+        try:
+            self._root.after(700, self._premium_poll_focus)
+        except Exception:
+            pass  # Het hoofdvenster is afgesloten.
+
+    def _premium_open_system_page(self, section: str) -> None:
+        """Gebruik een tijdens installatie gecontroleerde bestaande schermfunctie.
+
+        De update-installer leest de echte TouchApp op de gebruiker zijn clone.
+        Zo wordt geen updater vervangen en wordt geen nieuwe updateactie verzonnen.
+        """
+        from wekker.gui.settings_routes_v1021 import ROUTES
+        route = ROUTES[section]
+        name = route["method"]
+        if not name.startswith(("_show_", "_open_")):
+            raise ValueError("Ongeldige systeemschermfunctie")
+        callback = getattr(self, name, None)
+        if not callable(callback):
+            raise RuntimeError("Systeemscherm ontbreekt; voer de 10.2.1-installer opnieuw uit")
+        self._premium_close_details()
+        self._last_activity = time.monotonic()
+        callback(*route["args"])
 
     def _premium_close_details(self) -> None:
         overlay = self._premium_details_overlay

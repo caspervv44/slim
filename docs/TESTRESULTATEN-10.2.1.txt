@@ -1,0 +1,36 @@
+Lokale testomgeving: Linux, Python 3.13.5, virtueel 800x480-display.
+BELANGRIJK: de volledige actuele GitHub-repository kon niet worden opgehaald.
+Legacy TouchApp is in de integratietests een expliciete interfacefixture.
+De schermrenderer en de starter-/installerlogica zijn de daadwerkelijk geleverde code.
+
+........................................................................ [ 68%]
+.................................                                        [100%]
+105 passed in 7.18s
+
+TK-SMOKE OK: 8 tegelklikken via echte Tk-events; 1 behouden canvas; focusverzoek verwerkt.
+
+Niet getest: boot op echte Raspberry Pi, de huidige echte legacy-overlayimplementaties,
+speaker/alarmhardware, of een openbare GitHub-push. Geen live feed opgevraagd.
+De installer controleert de echte TouchApp-methoden lokaal voordat hij iets wijzigt.
+
+Extra compatibiliteitscontrole (26 oktober 2026):
+- 5 unittest-casussen van de drie-weg-samenvoeging geslaagd:
+  exacte basis, niet-overlappende eigen wijzigingen, bewust conflict,
+  Windows-CRLF, onbetrouwbare baseline.
+- End-to-end testclone met aangepaste premium.py en premium_render.py:
+  --check, --apply en herhaalde --check geslaagd; eigen regels behouden.
+- 59 WakeSync-10.2.1-regressietests geslaagd op die gesimuleerde testclone.
+- De ACTUELE GitHub-premium.py kon niet rechtstreeks worden opgehaald;
+  pas op de eigen clone blijkt of een automatische samenvoeging mogelijk is.
+
+Aanvullende controle voor broncode uit WakeSync-broncode-voor-fix.zip:
+- De door gebruiker aangeleverde premium.py verschilt van de 10.2.0-basis
+  alleen door een __init__-fallback naar twee argumenten.
+- premium_render.py is identiek aan de 10.2.0-basis na CRLF-normalisatie.
+- De nieuwe 10.2.1-payload bewaart de fallback.
+- 3 gerichte unittest-scenario's: veilig herkennen, toepassen/herstellen,
+  afwijzen van nieuwe overlappende wijzigingen.
+- 5 bestaande samenvoegtesten: basis, eigen wijzigingen, conflicten,
+  onbetrouwbare referentie, Windows-regelafbrekingen.
+Deze tests gebruiken een tijdelijke repository. Een echte Windows-clonecheck
+en fysieke Pi-test blijven vereist.

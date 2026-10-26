@@ -1,0 +1,34 @@
+{
+  "version": "10.2.1",
+  "files": {
+    "src/wekker/desktop.py": {
+      "new": "8f473e6267441b01bf81cd95d4798744de2a05f3c1001dcb29d4805fd122f4ff",
+      "old": []
+    },
+    "src/wekker/gui/premium.py": {
+      "new": "49a70191bd76394bfa50065be2f678af0cd1cd0255c1b70a9e1a312098306a42",
+      "old": [
+        "7a8a0b55476a7caff1358d1e72f1b6c75544151d344cf0df30681ab78d00a0b2",
+        "179649c25b3862565a45785de84d53d02a98eb7072b5a91c47997a2b0a8fdbee"
+      ]
+    },
+    "src/wekker/gui/premium_render.py": {
+      "new": "9939f1b7bd58134c0c2e0a4d4ec4638be7c42ca3c2dbb303bfdba78207ef3230",
+      "old": [
+        "e5d055c2b1ab817b8e0c7d5d6cef638e24f8bfa674118df320671605e907f1f6"
+      ]
+    },
+    "tools/install_wakesync_desktop.py": {
+      "new": "508a3ea3898789c1ef06ad4a823c6a80cfb85dc4bd69da6a94cf132ec301bd43",
+      "old": []
+    },
+    "tools/wakesync_install_common.py": {
+      "new": "6f2e84a6248bea46dbbadf8ba2074dd125bac2594453062334407880f7f77da6",
+      "old": []
+    },
+    "tools/wakesync_launch.py": {
+      "new": "679bc524a1e60b58c74c68969b109eea9e3b6dda55437e046bd852240f6042d9",
+      "old": []
+    }
+  }
+}

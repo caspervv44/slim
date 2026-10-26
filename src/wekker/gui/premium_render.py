@@ -1,4 +1,4 @@
-"""WakeSync Premium: vier hoogwaardige 800×480-schermontwerpen.
+"""WakeSync Premium 10.2.1: grotere bediening, dezelfde vier ontwerpen.
 
 Dit bestand heeft geen afhankelijkheid van de wekkerlogica. Het tekent uitsluitend
 een afbeelding van het bestaande schermmodel. Alle acties worden elders
@@ -304,20 +304,22 @@ class Painter:
 
     def navigation(self, page: str) -> None:
         self.logo()
-        self.card(216,14,566,54,radius=14,alpha=240)
+        # De indeling blijft gelijk; de tabs zijn hoger en staan 6 px lager.
+        self.card(216,18,566,60,radius=14,alpha=240)
         tabs=(("main","Vandaag","home"),("agenda","Agenda","calendar"),
               ("alarm","Alarm","clock"),("settings","Instellingen","settings"))
         for index,(screen,title,icon) in enumerate(tabs):
             x=224+index*138
             active=page==screen
+            self.rect((x,20,x+130,74),
+                      self.pal.raised if active else self.pal.card, radius=11,
+                      outline=self.pal.accent if active else self.pal.border)
             if active:
-                self.rect((x,20,x+130,62),self.pal.raised,radius=11,
-                          outline=self.pal.accent)
-                self.rect((x+24,60,x+106,62),self.pal.accent,2)
-            self._icon(icon,x+15,41,self.pal.accent if active else self.pal.muted)
-            self.text(x+77,42,title,11,bold=active,
+                self.rect((x+24,72,x+106,74),self.pal.accent,2)
+            self._icon(icon,x+15,47,self.pal.accent if active else self.pal.muted)
+            self.text(x+78,48,title,13,bold=active,
                       color=self.pal.text if active else self.pal.muted,anchor="mm")
-            self.hit(x,18,132,46,"nav",screen)
+            self.hit(x,19,132,58,"nav",screen)
 
     def artwork_card(self,x:int,y:int,w:int,h:int, *,
                      darken:float=0.35,radius:int=14) -> None:
@@ -454,12 +456,12 @@ def _draw_agenda(p:Painter,layout:dict,now:datetime) -> None:
     p.card(18,82,535,52)
     p._icon("calendar",39,108,p.pal.accent)
     p.text(61,95,_safe(layout.get("day"),"Vandaag"),14,bold=True,max_width=290)
-    p.pill(381,94,40,28,"‹",font_size=17)
-    p.pill(427,94,40,28,"›",font_size=17)
-    p.pill(473,94,64,28,"Nu",font_size=10)
-    p.hit(378,91,44,33,"agenda-day","-1")
-    p.hit(425,91,45,33,"agenda-day","1")
-    p.hit(471,91,65,33,"agenda-today")
+    p.pill(361,87,51,42,"‹",font_size=22)
+    p.pill(419,87,51,42,"›",font_size=22)
+    p.pill(477,87,62,42,"Nu",font_size=13)
+    p.hit(361,87,51,42,"agenda-day","-1")
+    p.hit(419,87,51,42,"agenda-day","1")
+    p.hit(477,87,62,42,"agenda-today")
 
     rows=list(layout.get("rows",[]))[:6]
     p.card(18,145,535,309)
@@ -493,12 +495,12 @@ def _draw_agenda(p:Painter,layout:dict,now:datetime) -> None:
     p.text(584,292,f"{page} / {total}",27,bold=True)
     p.text(584,334,_safe(layout.get("status_text"),"Agenda geladen"),
            10,color=p.pal.muted,max_width=182)
-    p.pill(582,393,82,37,"‹ Vorige",font_size=10)
-    p.pill(673,393,88,37,"Volgende ›",font_size=10)
+    p.pill(580,389,90,48,"‹ Vorige",font_size=12)
+    p.pill(676,389,90,48,"Volgende ›",font_size=12)
     if page>1:
-        p.hit(580,389,88,44,"agenda-page","-1")
+        p.hit(580,389,90,48,"agenda-page","-1")
     if page<total:
-        p.hit(671,389,94,44,"agenda-page","1")
+        p.hit(676,389,90,48,"agenda-page","1")
     if layout.get("simulated") and rows:
         p.text(37,440,"VOORBEELDROOSTER",9,color=p.pal.muted,bold=True)
 
@@ -522,8 +524,8 @@ def _draw_alarm(p:Painter,layout:dict,now:datetime,selected_alarm_id:str|None) -
 
     p.card(339,82,443,379)
     p.text(357,98,"Mijn alarmen",17,bold=True)
-    p.pill(628,94,136,34,"+ Alarm toevoegen",active=True,font_size=10)
-    p.hit(625,91,144,38,"new-alarm")
+    p.pill(604,89,164,44,"+ Alarm toevoegen",active=True,font_size=12)
+    p.hit(604,89,164,44,"new-alarm")
 
     items=list(layout.get("items") or [])
     count=len(items)
@@ -539,26 +541,30 @@ def _draw_alarm(p:Painter,layout:dict,now:datetime,selected_alarm_id:str|None) -
         p.card(351,y,418,62,active=active,radius=12)
         alarm_id=str(item.get("id"))
         p.text(361,y+11,_safe(item.get("time")),21,bold=True,max_width=113)
-        p.text(463,y+7,_alarm_display_name(item),11,bold=True,max_width=100)
-        p.text(463,y+31,_safe(item.get("day_label")),9,color=p.pal.muted,max_width=125)
-        p._icon("clock",586,y+18,p.pal.accent)
-        p.text(600,y+10,f'{item.get("snooze_minutes",9)} m',9,color=p.pal.muted)
-        p._icon("speaker",642,y+20,p.pal.accent if item.get("speaker_enabled") else p.pal.muted)
-        p._icon("lamp",680,y+20,p.pal.accent if item.get("lamp_blink") else p.pal.muted)
-        p.toggle(717,y+19,bool(item.get("enabled")),w=38,h=23)
-        p.hit(352,y,226,62,"select-alarm",alarm_id)
-        p.hit(580,y,49,62,"cycle-snooze",alarm_id)
-        p.hit(629,y,34,62,"toggle-speaker",alarm_id)
-        p.hit(666,y,35,62,"toggle-lamp",alarm_id)
-        p.hit(707,y,57,62,"toggle-alarm",alarm_id)
+        p.text(463,y+7,_alarm_display_name(item),11,bold=True,max_width=87)
+        p.text(463,y+31,_safe(item.get("day_label")),10,color=p.pal.muted,max_width=87)
+        p._icon("clock",583,y+17,p.pal.accent)
+        p.text(583,y+43,f'{item.get("snooze_minutes",9)} m',11,
+               color=p.pal.muted,anchor="mm")
+        # Grotere, gescheiden knoppen: geen overlappende klikgebieden.
+        p.rect((614,y+8,658,y+54),p.pal.raised,10,200,p.pal.border)
+        p.rect((662,y+8,706,y+54),p.pal.raised,10,200,p.pal.border)
+        p._icon("speaker",636,y+31,p.pal.accent if item.get("speaker_enabled") else p.pal.muted)
+        p._icon("lamp",684,y+31,p.pal.accent if item.get("lamp_blink") else p.pal.muted)
+        p.toggle(716,y+15,bool(item.get("enabled")),w=48,h=32)
+        p.hit(352,y,201,62,"select-alarm",alarm_id)
+        p.hit(554,y,59,62,"cycle-snooze",alarm_id)
+        p.hit(614,y,44,62,"toggle-speaker",alarm_id)
+        p.hit(662,y,44,62,"toggle-lamp",alarm_id)
+        p.hit(710,y,56,62,"toggle-alarm",alarm_id)
     if page_count>1:
-        p.pill(484,427,61,26,"‹",font_size=15)
-        p.text(560,440,f"{page+1}/{page_count}",9,color=p.pal.muted,anchor="mm")
-        p.pill(580,427,61,26,"›",font_size=15)
+        p.pill(461,420,77,38,"‹",font_size=20)
+        p.text(560,439,f"{page+1}/{page_count}",11,color=p.pal.muted,anchor="mm")
+        p.pill(584,420,77,38,"›",font_size=20)
         if page>0:
-            p.hit(483,426,61,29,"alarm-page","-1")
+            p.hit(461,420,77,38,"alarm-page","-1")
         if page+1<page_count:
-            p.hit(580,426,61,29,"alarm-page","1")
+            p.hit(584,420,77,38,"alarm-page","1")
     else:
         p.text(362,441,"Tik op een alarm voor alle instellingen",9,color=p.pal.muted)
 
@@ -567,8 +573,8 @@ def _settings_tile(p:Painter,x:int,y:int,w:int,h:int,title:str,
                    value:str,icon:str,action:str,payload:str="") -> None:
     p.card(x,y,w,h,radius=13)
     p._icon(icon,x+21,y+22,p.pal.accent)
-    p.text(x+37,y+11,title,11,bold=True,max_width=w-52)
-    p.text(x+20,y+38,value,10,color=p.pal.muted,max_width=w-37)
+    p.text(x+39,y+10,title,14,bold=True,max_width=w-56)
+    p.text(x+20,y+42,value,12,color=p.pal.muted,max_width=w-37)
     p._icon("chevron",x+w-14,y+h-17,p.pal.muted)
     p.hit(x,y,w,h,action,payload)
 
@@ -582,11 +588,11 @@ def _draw_settings(p:Painter,layout:dict,now:datetime) -> None:
     p.text(37,353,THEME_TITLES[p.theme],17,color=p.pal.text if not p.pal.dark else "#FFFFFF",bold=True)
     theme_ids=tuple(THEME_TITLES)
     for i,theme_id in enumerate(theme_ids):
-        x=36+i*62
-        p.rect((x,397,x+51,440),PALETTES[theme_id].card,9,255,
+        x=34+i*64
+        p.rect((x,392,x+55,446),PALETTES[theme_id].card,10,255,
                p.pal.accent if p.theme==theme_id else "#A0A0A0")
-        p.circle(x+25,418,6,PALETTES[theme_id].accent)
-        p.hit(x,395,53,48,"theme",theme_id)
+        p.circle(x+27,419,8,PALETTES[theme_id].accent)
+        p.hit(x,392,55,54,"theme",theme_id)
 
     zone=_safe(layout.get("timezone"),"Europe/Amsterdam")
     if zone.startswith("Europe/"):
@@ -609,9 +615,9 @@ def _draw_settings(p:Painter,layout:dict,now:datetime) -> None:
                    _safe(layout.get("cloud_status"),"Cloudinstellingen"),
                    "cloud","cloud")
     _settings_tile(p,316,370,224,89,"Software",
-                   "Updates & versie","settings","software")
+                   "Updates & versie","settings","settings","software")
     _settings_tile(p,552,370,230,89,"Diagnose",
-                   "Systeeminformatie","settings","diagnostics")
+                   "Systeeminformatie","settings","settings","diagnostics")
 
 
 def render_screen(layout:dict,theme:str,now:datetime,asset_dir:Path,
@@ -640,12 +646,12 @@ def render_screen(layout:dict,theme:str,now:datetime,asset_dir:Path,
 # ---------------------------------------------------------------------------
 
 def _detail_top(p: Painter, title: str, subtitle: str) -> None:
-    p.card(18, 14, 764, 55, alpha=245)
-    p.pill(29, 23, 113, 36, "‹ Terug", font_size=12)
-    p.hit(29, 18, 118, 45, "close-detail")
-    p.text(164, 27, title, 18, bold=True, max_width=400)
-    p.text(164, 50, subtitle, 9, color=p.pal.muted, max_width=385)
-    p._icon("settings", 753, 41, p.pal.accent)
+    p.card(18, 18, 764, 60, alpha=245)
+    p.pill(28, 24, 137, 48, "‹ Terug", font_size=15)
+    p.hit(28, 24, 137, 48, "close-detail")
+    p.text(184, 27, title, 18, bold=True, max_width=400)
+    p.text(184, 53, subtitle, 10, color=p.pal.muted, max_width=510)
+    p._icon("settings", 753, 47, p.pal.accent)
 
 
 def _detail_setting(
@@ -654,8 +660,8 @@ def _detail_setting(
 ) -> None:
     p.card(x, y, w, 83, radius=14)
     p._icon(icon, x + 23, y + 27, p.pal.accent)
-    p.text(x + 42, y + 13, title, 11, bold=True, max_width=w - 62)
-    p.text(x + 18, y + 48, value, 11, color=p.pal.muted, max_width=w - 38)
+    p.text(x + 42, y + 12, title, 14, bold=True, max_width=w - 60)
+    p.text(x + 18, y + 49, value, 12, color=p.pal.muted, max_width=w - 38)
     p._icon("chevron", x + w - 19, y + 56, p.pal.accent)
     p.hit(x, y, w, 83, action, payload)
 
@@ -689,10 +695,10 @@ def render_detail_screen(
         for i, theme_id in enumerate(THEME_IDS):
             x = 37 + i * 62
             pal = PALETTES[theme_id]
-            p.rect((x, 365, x + 51, 415), pal.card, 10, 255,
+            p.rect((x, 358, x + 56, 422), pal.card, 10, 255,
                    pal.accent if p.theme == theme_id else p.pal.muted)
-            p.circle(x + 25, 390, 9, pal.accent)
-            p.hit(x, 360, 54, 58, "theme", theme_id)
+            p.circle(x + 28, 390, 11, pal.accent)
+            p.hit(x, 358, 56, 64, "theme", theme_id)
         p.text(38, 429, "Van blauw tot warm amber", 10,
                color="#FFFFFF" if p.pal.dark else p.pal.text)
 
@@ -739,15 +745,15 @@ def render_detail_screen(
                anchor="mt", max_width=230)
         p.text(155, 211, _safe(item.get("day_label"), "Dagelijks"), 11,
                color=p.pal.muted, anchor="mm")
-        p.pill(48, 254, 214, 34,
+        p.pill(42, 249, 228, 46,
                "Ingeschakeld" if item.get("enabled") else "Uitgeschakeld",
-               active=bool(item.get("enabled")), font_size=11)
-        p.hit(44, 248, 220, 44, "alarm-enabled")
-        p.pill(42, 351, 228, 34, "Geluid testen", font_size=11)
-        p.hit(39, 345, 232, 46, "test-audio")
-        p.pill(42, 401, 228, 35, "Alarm verwijderen", font_size=11,
+               active=bool(item.get("enabled")), font_size=14)
+        p.hit(42, 249, 228, 46, "alarm-enabled")
+        p.pill(42, 342, 228, 46, "Geluid testen", font_size=14)
+        p.hit(42, 342, 228, 46, "test-audio")
+        p.pill(42, 402, 228, 46, "Alarm verwijderen", font_size=14,
                bg=p.pal.card, fg="#F38A92" if p.pal.dark else "#BA3039")
-        p.hit(38, 396, 238, 47, "alarm-delete")
+        p.hit(42, 402, 228, 46, "alarm-delete")
 
         sound = str(item.get("sound", "beep")).capitalize()
         _detail_setting(p, 307, 82, 227, "Snooze",
