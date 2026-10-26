@@ -1,4 +1,4 @@
-"""WakeSync Premium 10.2.1: grotere bediening, dezelfde vier ontwerpen.
+"""WakeSync Premium 10.2.2: grotere bediening, dezelfde vier ontwerpen.
 
 Dit bestand heeft geen afhankelijkheid van de wekkerlogica. Het tekent uitsluitend
 een afbeelding van het bestaande schermmodel. Alle acties worden elders
@@ -546,16 +546,15 @@ def _draw_alarm(p:Painter,layout:dict,now:datetime,selected_alarm_id:str|None) -
         p._icon("clock",583,y+17,p.pal.accent)
         p.text(583,y+43,f'{item.get("snooze_minutes",9)} m',11,
                color=p.pal.muted,anchor="mm")
-        # Grotere, gescheiden knoppen: geen overlappende klikgebieden.
-        p.rect((614,y+8,658,y+54),p.pal.raised,10,200,p.pal.border)
-        p.rect((662,y+8,706,y+54),p.pal.raised,10,200,p.pal.border)
-        p._icon("speaker",636,y+31,p.pal.accent if item.get("speaker_enabled") else p.pal.muted)
-        p._icon("lamp",684,y+31,p.pal.accent if item.get("lamp_blink") else p.pal.muted)
+        # Eén groot geluidsvlak vervangt de lampoptie totdat die hardware er is.
+        p.rect((614,y+8,706,y+54),p.pal.raised,10,200,p.pal.border)
+        p._icon("speaker",635,y+31,p.pal.accent if item.get("speaker_enabled") else p.pal.muted)
+        p.text(652,y+24,"Aan" if item.get("speaker_enabled") else "Uit",10,
+               bold=True,color=p.pal.text)
         p.toggle(716,y+15,bool(item.get("enabled")),w=48,h=32)
         p.hit(352,y,201,62,"select-alarm",alarm_id)
         p.hit(554,y,59,62,"cycle-snooze",alarm_id)
-        p.hit(614,y,44,62,"toggle-speaker",alarm_id)
-        p.hit(662,y,44,62,"toggle-lamp",alarm_id)
+        p.hit(614,y,92,62,"toggle-speaker",alarm_id)
         p.hit(710,y,56,62,"toggle-alarm",alarm_id)
     if page_count>1:
         p.pill(461,420,77,38,"‹",font_size=20)
@@ -736,7 +735,7 @@ def render_detail_screen(
     else:
         if item is None:
             raise ValueError("Alarmgegevens ontbreken")
-        _detail_top(p, "Alarm aanpassen", "Alle bestaande alarmopties in één stijl")
+        _detail_top(p, "Alarm aanpassen", "Geluid en snooze voor je alarm")
         p.artwork_card(18, 82, 274, 379, darken=.62)
         p.rect((30, 100, 280, 230), p.pal.bg, 16, 206)
         p.text(155, 112, "GESELECTEERD ALARM", 10, color=p.pal.accent_alt,
@@ -764,23 +763,24 @@ def render_detail_screen(
         _detail_setting(p, 307, 176, 227, "Speaker",
                         "Aan" if item.get("speaker_enabled") else "Uit",
                         "speaker", "alarm-speaker")
-        _detail_setting(p, 546, 176, 237, "Lamp",
-                        "Aan" if item.get("lamp_blink") else "Uit",
-                        "lamp", "alarm-lamp")
-        _detail_setting(p, 307, 270, 227, "Volume",
+        _detail_setting(p, 546, 176, 237, "Volume",
                         f'{int(item.get("volume", 70))}% · tik voor +10',
                         "speaker", "alarm-volume")
-        _detail_setting(p, 546, 270, 237, "Lamphelderheid",
-                        f'{int(item.get("lamp_brightness", 100))}%',
-                        "sun", "alarm-lamp-brightness")
-        pattern = dict(steady="Constant", blink="Knipperen", pulse="Pulseren").get(
-            str(item.get("blink_pattern", "blink")), "Knipperen"
-        )
-        _detail_setting(p, 307, 364, 227, "Lamppatroon", pattern,
-                        "lamp", "alarm-pattern")
-        _detail_setting(p, 546, 364, 237, "Opbouw",
+        _detail_setting(p, 307, 270, 227, "Opbouw",
                         f'{int(item.get("ramp_up_seconds", 30))} seconden',
                         "clock", "alarm-ramp")
+        # Deze informatiekaarten zijn niet klikbaar. Geen verwijzingen naar
+        # nog niet aangesloten fysieke lampen of knoppen.
+        p.card(546, 270, 237, 83, radius=14)
+        p._icon("clock", 569, 297, p.pal.accent)
+        p.text(588, 282, "Bediening", 14, bold=True, max_width=175)
+        p.text(564, 319, "Snooze en stop op scherm", 11,
+               color=p.pal.muted, max_width=196)
+        p.card(307, 364, 476, 83, radius=14)
+        p._icon("speaker", 330, 392, p.pal.accent)
+        p.text(349, 376, "Geluid controleren", 14, bold=True)
+        p.text(325, 414, "Gebruik 'Geluid testen' links om de luidspreker te horen.",
+               11, color=p.pal.muted, max_width=430)
     return p.finish()
 
 

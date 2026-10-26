@@ -142,6 +142,12 @@ class AlarmClock:
             return self._speaker.is_playing
 
     @property
+    def speaker_error(self) -> str | None:
+        """Foutmelding van de echte luidspreker, indien beschikbaar."""
+        with self._lock:
+            return getattr(self._speaker, "last_error", None)
+
+    @property
     def missed_notice(self) -> str:
         with self._lock:
             return self._missed_notice
@@ -186,13 +192,17 @@ class AlarmClock:
             self._transition(AlarmState.SNOOZED, snooze_until=target)
             return True
 
-    def dismiss(self, physical: bool) -> bool:
-        """Stop het actieve alarm. Stoppen vereist de fysieke productknop."""
+    def dismiss(self, physical: bool = False, *, touchscreen: bool = False) -> bool:
+        """Stop het alarm via een fysieke knop of een expliciete touchscreenactie.
+
+        De oude 'physical=False'-aanroepen blijven zonder touchscreenbevestiging
+        geweigerd. Hierdoor veranderen bestaande externe callers niet onbedoeld.
+        """
         with self._lock:
             if self.state not in (AlarmState.RINGING, AlarmState.SNOOZED):
                 return False
-            if not physical:
-                log.warning("dismiss geweigerd: geen fysieke bevestiging")
+            if not (physical or touchscreen):
+                log.warning("dismiss geweigerd: geen bediening bevestigd")
                 return False
             alarm_id = self._active_profile().id
             self._missed_dates.pop(alarm_id, None)

@@ -53,8 +53,8 @@ def test_premium_alarmdetails_per_thema(theme):
     assert all(x.contains((x.x0 + x.x1 - 1)//2,(x.y0 + x.y1 - 1)//2) for x in hits)
     actions = {x.action for x in hits}
     assert {"alarm-enabled", "alarm-snooze", "alarm-sound", "alarm-speaker",
-            "alarm-lamp", "alarm-volume", "alarm-lamp-brightness",
-            "alarm-pattern", "alarm-ramp", "test-audio", "alarm-delete"} <= actions
+            "alarm-volume", "alarm-ramp", "test-audio", "alarm-delete"} <= actions
+    assert not {"alarm-lamp", "alarm-lamp-brightness", "alarm-pattern"} & actions
 
 
 @pytest.mark.parametrize("theme", list(PALETTES))

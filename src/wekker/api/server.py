@@ -161,9 +161,9 @@ pre{white-space:pre-wrap;word-break:break-word;background:#f7f9fc;border-radius:
 <div class="small muted" id="st_sync">Nog niet gesynchroniseerd</div><div class="divider"></div>
 <button onclick="syncNow()">Nu synchroniseren</button></section>
 
-<section class="card span-4"><div class="eyebrow">Hardware</div>
-<div class="row"><span class="pill">Lamp: <b id="st_lamp">–</b></span><span class="pill">Speaker: <b id="st_speaker">–</b></span></div>
-<div class="divider"></div><div class="row"><button onclick="act('/api/lamp/test')">Lamp testen</button><button onclick="act('/api/speaker/test')">Speaker testen</button></div></section>
+<section class="card span-4"><div class="eyebrow">Geluid</div>
+<div class="row"><span class="pill">Speaker: <b id="st_speaker">–</b></span></div>
+<div class="divider"></div><div class="row"><button onclick="act('/api/speaker/test')">Geluid testen</button></div></section>
 
 <section class="card span-12">
 <div class="agenda-head"><div><div class="eyebrow">Rooster</div><h2 style="margin:3px 0 0">Komende 7 dagen</h2></div>
@@ -202,10 +202,8 @@ pre{white-space:pre-wrap;word-break:break-word;background:#f7f9fc;border-radius:
 <div class="eyebrow">Instellingen</div><h2 style="font-size:1.2rem;margin-top:4px">Wekker</h2>
 <div class="stack">
 <label>Wektijd<input id="f_time" type="time" value="07:30"></label>
-<label>Lampduur na knop (seconden)<input id="f_lampdur" type="number" min="1" max="3600" value="30"></label>
 <label>Geluid<input id="f_sound" value="beep"></label>
 <label><span><input type="checkbox" id="f_spk" style="width:auto"> Speaker bij alarm</span></label>
-<label><span><input type="checkbox" id="f_lamp" style="width:auto"> Lamp bij alarm</span></label>
 <label>Agenda-provider<select id="f_prov"></select></label>
 <button class="primary" onclick="saveSettings()">Instellingen opslaan</button>
 </div></section>
@@ -249,7 +247,7 @@ async function tick(){
  try{
   const [s,a,g]=await Promise.all([jget('/api/status'),jget('/api/agenda/auth/status'),jget('/api/agenda/status')]);
   $('st_time').textContent=s.now.slice(11,16);$('st_tz').textContent=s.timezone;$('st_alarm').textContent=s.next_alarm?fmtTime(s.next_alarm):'uit';$('st_state').textContent=s.state;
-  $('st_lamp').textContent=s.lamp_on?'aan':'uit';$('st_speaker').textContent=s.speaker_playing?'aan':'uit';$('st_conn').textContent='verbonden';$('conn_pill').className='pill ok';
+  $('st_speaker').textContent=s.speaker_playing?'aan':'uit';$('st_conn').textContent='verbonden';$('conn_pill').className='pill ok';
   $('st_agenda').textContent=a.provider_name||a.provider;$('st_sync').textContent=g.last_sync?'Bijgewerkt '+g.last_sync.slice(0,16).replace('T',' '):'Nog niet gesynchroniseerd';
   renderAuth(a);
   try{renderAgenda(await jget('/api/agenda/items'))}catch(e){$('agenda').innerHTML=`<div class="empty">${esc(e.message)}</div>`}
@@ -257,11 +255,11 @@ async function tick(){
 }
 async function fillForm(){
  try{
-  const c=await jget('/api/settings');$('f_time').value=c.alarm.time;$('f_lampdur').value=c.lamp.duration_after_button;$('f_spk').checked=c.alarm.speaker_enabled;$('f_lamp').checked=c.lamp.on_with_alarm;$('f_sound').value=c.alarm.sound;
+  const c=await jget('/api/settings');$('f_time').value=c.alarm.time;$('f_spk').checked=c.alarm.speaker_enabled;$('f_sound').value=c.alarm.sound;
   const plist=await jget('/api/agenda/providers'),sel=$('f_prov');sel.innerHTML='';plist.providers.forEach(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.display_name+(p.available?'':' (later)');o.selected=p.selected;sel.appendChild(o)});
  }catch(e){msg('Instellingen laden mislukt: '+e.message)}
 }
-async function saveSettings(){try{await jpost('/api/settings',{alarm:{time:$('f_time').value,speaker_enabled:$('f_spk').checked,sound:$('f_sound').value},lamp:{duration_after_button:Number($('f_lampdur').value),on_with_alarm:$('f_lamp').checked},agenda:{provider:$('f_prov').value}});msg('Instellingen opgeslagen.',true);await tick()}catch(e){msg(e.message)}}
+async function saveSettings(){try{await jpost('/api/settings',{alarm:{time:$('f_time').value,speaker_enabled:$('f_spk').checked,sound:$('f_sound').value},agenda:{provider:$('f_prov').value}});msg('Instellingen opgeslagen.',true);await tick()}catch(e){msg(e.message)}}
 async function saveFeed(){try{const r=await jpost('/api/agenda/myx/feed',{feed_url:$('f_feed').value});$('f_feed').value='';msg(r.message||'MyX-feed gekoppeld.',true);await fillForm();await tick()}catch(e){msg('Feed koppelen mislukt: '+e.message)}}
 async function syncNow(){try{await jpost('/api/agenda/sync',{});msg('Rooster bijgewerkt.',true);await tick()}catch(e){msg('Synchroniseren mislukt: '+e.message)}}
 async function startPiLogin(){try{await jpost('/api/settings',{agenda:{provider:'myx'}});const r=await jpost('/api/agenda/auth/start',{});msg(r.message||'MyX-login geopend op de Raspberry Pi.',true);await fillForm();await tick()}catch(e){msg(e.message)}}
@@ -657,9 +655,8 @@ def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
                 if path == "/api/settings":
                     _send(self, 200, _apply_settings(ctx, body))
                 elif path == "/api/alarm/dismiss":
-                    # Lokaal prototype: afhandelen alsof de button is ingedrukt.
-                    # Op het echte product blijft de fysieke button de hoofdweg.
-                    ok = ctx.core.dismiss(physical=True)
+                    # Voorlopig direct stoppen via de ingelogde webbediening.
+                    ok = ctx.core.dismiss(touchscreen=True)
                     code = 200 if ok else 409
                     _send(self, code, {"ok": ok, "state": ctx.core.state.value})
                 elif path == "/api/button/press":
@@ -681,8 +678,14 @@ def make_handler(ctx: AppContext) -> type[BaseHTTPRequestHandler]:
                         _send(self, 409, {"error": "Alarm actief; test niet mogelijk."})
                         return
                     ctx.core.sound_start()
-                    time.sleep(SPEAKER_TEST_SECONDS)
-                    ctx.core.sound_stop()
+                    try:
+                        time.sleep(SPEAKER_TEST_SECONDS)
+                        audio_error = getattr(ctx.core, "speaker_error", None)
+                    finally:
+                        ctx.core.sound_stop()
+                    if audio_error:
+                        _send(self, 502, {"error": f"Geluidstest mislukt: {str(audio_error)[:180]}"})
+                        return
                     _send(self, 200, {"ok": True, "sound": ctx.settings.alarm.sound,
                                       "seconds": SPEAKER_TEST_SECONDS})
                 elif path == "/api/agenda/myx/feed":

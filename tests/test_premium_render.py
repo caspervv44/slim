@@ -55,8 +55,9 @@ def test_thema_sleutels_compatibel_met_vorige_wakesync():
 def test_alarmen_hebben_tapbare_opties(layouts):
     _, hits = render_screen(layouts[2], "amber", MOMENT, ASSETS)
     for action in ("new-alarm","select-alarm","toggle-alarm",
-                   "toggle-speaker","toggle-lamp","cycle-snooze"):
+                   "toggle-speaker","cycle-snooze"):
         assert any(hit.action == action for hit in hits)
+    assert not any(hit.action == "toggle-lamp" for hit in hits)
 
 
 def test_agenda_paginering(layouts):

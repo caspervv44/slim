@@ -1126,7 +1126,7 @@ class TouchApp:
             tk.Label(
                 right,
                 text="Tik links op een bestaand alarm om snooze, "
-                     "volume, speaker en lamp te configureren.",
+                     "volume en geluid in te stellen.",
                 font=("DejaVu Sans", 9),
                 fg=MUTED,
                 bg=CARD,
@@ -1236,54 +1236,6 @@ class TouchApp:
             width=54,
             height=28,
         ).pack(side="right", padx=7, pady=2)
-
-        lamp_row = row("Lamp")
-        lamp_on = bool(item.get("lamp_blink", True))
-        self._make_toggle(
-            lamp_row,
-            lamp_on,
-            lambda: self._toggle_alarm_profile_bool(alarm_id, "lamp_blink"),
-            width=54,
-            height=28,
-        ).pack(side="right", padx=7, pady=2)
-
-        lamp_power_row = row("Lampsterkte")
-        tk.Label(
-            lamp_power_row,
-            text=f'{int(item.get("lamp_brightness", 100))}%',
-            font=("DejaVu Sans", 9, "bold"),
-            fg=TEXT, bg=CARD_ALT, width=6,
-        ).pack(side="right", padx=2)
-        tk.Button(
-            lamp_power_row, text="+", font=("DejaVu Sans", 9, "bold"),
-            fg=TEXT, bg=CARD, bd=0, width=3,
-            command=lambda: self._adjust_alarm_profile_value(
-                alarm_id, "lamp_brightness", 10, 0, 100
-            ),
-        ).pack(side="right", padx=2, pady=3)
-        tk.Button(
-            lamp_power_row, text="−", font=("DejaVu Sans", 9, "bold"),
-            fg=TEXT, bg=CARD, bd=0, width=3,
-            command=lambda: self._adjust_alarm_profile_value(
-                alarm_id, "lamp_brightness", -10, 0, 100
-            ),
-        ).pack(side="right", padx=2, pady=3)
-
-        effect_row = row("Lampeffect")
-        patterns = {
-            "steady": "Constant",
-            "blink": "Knipperen",
-            "pulse": "Pulseren",
-        }
-        tk.Button(
-            effect_row,
-            text=patterns.get(str(item.get("blink_pattern")), "Knipperen"),
-            font=("DejaVu Sans", 9, "bold"),
-            fg=TEXT, bg=CARD_ALT, bd=0, padx=8,
-            command=lambda: self._cycle_alarm_profile_value(
-                alarm_id, "blink_pattern", ["steady", "blink", "pulse"]
-            ),
-        ).pack(side="right", padx=5)
 
         bottom = tk.Frame(config, bg=CARD)
         bottom.pack(fill="x", pady=(5, 0))
@@ -2533,36 +2485,49 @@ class TouchApp:
             self._alarm_overlay = overlay
 
             title = tk.Label(
-                overlay, text="", font=("DejaVu Sans", 34, "bold"),
+                overlay, text="", font=("DejaVu Sans", 32, "bold"),
                 fg="#ffffff", bg="#190b12",
             )
-            title.pack(pady=(58, 8))
+            title.pack(pady=(38, 6))
             clock = tk.Label(
-                overlay, text="", font=("DejaVu Sans", 56, "bold"),
+                overlay, text="", font=("DejaVu Sans", 55, "bold"),
                 fg="#ffcc66", bg="#190b12",
             )
             clock.pack()
             sub = tk.Label(
-                overlay, text="", font=("DejaVu Sans", 14, "bold"),
+                overlay, text="", font=("DejaVu Sans", 13, "bold"),
                 fg="#f2bac3", bg="#190b12",
             )
-            sub.pack(pady=(4, 18))
+            sub.pack(pady=(3, 15))
+            # Twee brede raakvlakken blijven zowel tijdens afgaan als snoozen
+            # op dezelfde positie staan. Stoppen is altijd mogelijk op het scherm.
+            actions = tk.Frame(overlay, bg="#190b12")
+            actions.pack(fill="x", padx=55, pady=(8, 0))
             snooze = tk.Button(
-                overlay, text="", font=("DejaVu Sans", 18, "bold"),
+                actions, text="", font=("DejaVu Sans", 16, "bold"),
                 fg="#172033", bg="#ffcc66", activebackground="#ffe19a",
-                bd=0, padx=28, pady=12, command=self._snooze_from_screen,
+                bd=0, padx=14, pady=16, command=self._snooze_from_screen,
             )
-            snooze.pack()
+            snooze.pack(side="left", fill="x", expand=True, padx=(0, 7))
+            stop_alarm = tk.Button(
+                actions, text="Alarm stoppen",
+                font=("DejaVu Sans", 16, "bold"),
+                fg="#ffffff", bg="#b8324a", activebackground="#da4965",
+                activeforeground="#ffffff", bd=0, padx=14, pady=16,
+                command=self._dismiss_alarm_from_screen,
+            )
+            stop_alarm.pack(side="left", fill="x", expand=True, padx=(7, 0))
             hint = tk.Label(
-                overlay, text="Stoppen: gebruik de fysieke knop op WakeSync",
-                font=("DejaVu Sans", 11), fg="#d49aa5", bg="#190b12",
+                overlay, text="Je kunt het alarm volledig via dit scherm bedienen",
+                font=("DejaVu Sans", 10), fg="#d49aa5", bg="#190b12",
             )
-            hint.pack(side="bottom", pady=(0, 30))
+            hint.pack(side="bottom", pady=(0, 24))
             self._widgets.update({
                 "_overlay_alarm_title": title,
                 "_overlay_alarm_clock": clock,
                 "_overlay_alarm_sub": sub,
                 "_overlay_alarm_snooze": snooze,
+                "_overlay_alarm_stop": stop_alarm,
             })
 
         self._refresh_alarm_overlay(state)
@@ -2578,11 +2543,11 @@ class TouchApp:
         self._set_text(clock, format_time(now, self._runtime.ctx.settings.locale.time_format))
         if state == "ringing":
             self._set_text(title, "Alarm gaat af")
-            self._set_text(sub, "Sta op · lamp en geluid volgen je ingestelde alarmprofiel")
+            self._set_text(sub, "Je alarm gaat af · kies Snooze of Alarm stoppen")
             self._set_text(
                 snooze, f"Snooze {self._runtime.ctx.settings.alarm.snooze_minutes} minuten"
             )
-            snooze.config(state="normal")
+            snooze.config(state="normal", bg="#ffcc66", fg="#172033")
         else:
             until = self._runtime.ctx.core.snooze_until
             remaining = max(0, int((until - now).total_seconds())) if until else 0
@@ -2590,14 +2555,32 @@ class TouchApp:
             self._set_text(title, "Snooze")
             self._set_text(sub, f"Alarm gaat opnieuw af over {minutes:02d}:{seconds:02d}")
             self._set_text(snooze, "Snooze actief")
-            snooze.config(state="disabled")
+            snooze.config(
+                state="disabled", bg="#4f4051", disabledforeground="#f2bac3",
+            )
 
     def _snooze_from_screen(self) -> None:
         try:
             if not self._runtime.ctx.core.snooze():
                 self._show_toast("Snooze kon niet worden gestart", error=True)
+            else:
+                self._ensure_alarm_overlay()
         except Exception as exc:
             self._show_toast(f"Snooze-fout: {exc}", error=True)
+
+    def _dismiss_alarm_from_screen(self) -> None:
+        """Stop een afgaand óf gesnoozed alarm zonder extra hardware."""
+        try:
+            if not self._runtime.ctx.core.dismiss(touchscreen=True):
+                self._show_toast("Er is geen actief alarm om te stoppen", error=True)
+                return
+            # Maak het volledige scherm direct weer bereikbaar, zonder op
+            # de volgende periodieke GUI-tick te hoeven wachten.
+            self._ensure_alarm_overlay()
+            self._show_toast("Alarm gestopt")
+        except Exception as exc:
+            log.exception("Alarm via touchscreen stoppen mislukte")
+            self._show_toast(f"Alarm stoppen mislukt: {exc}", error=True)
 
     # ------------------------------------------------------------------
     # Slaapmodus

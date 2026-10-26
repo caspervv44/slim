@@ -1,4 +1,4 @@
-"""WakeSync Premium v10.2.1: vier thema's, detailschermen en rustige slaapstand.
+"""WakeSync Premium v10.2.2: vier thema's, detailschermen en rustige slaapstand.
 
 De bestaande TouchApp blijft verantwoordelijk voor gegevens, acties en alarms.
 De premium-laag verandert uitsluitend de weergave; een Canvas blijft bestaan bij
@@ -462,26 +462,41 @@ class PremiumTouchApp(legacy.TouchApp):
 
     def _premium_test_audio(self, alarm_id: str) -> None:
         state = getattr(getattr(self._runtime.ctx.core, "state", None), "value", "")
-        if state == "ringing":
-            self._show_toast("Alarm klinkt al")
+        if state in {"ringing", "snoozed"}:
+            self._show_toast("Alarm actief; eerst stoppen via het scherm")
             return
         item = self._alarm_item(alarm_id)
         if item is None:
             return
+        from wekker.hardware.mock import MockSpeaker
+
+        speaker = self._runtime.speaker
+        if isinstance(speaker, MockSpeaker):
+            self._show_toast("Geen audio: de nepspeaker is actief", error=True)
+            return
+        volume = int(item.get("volume", 70))
+        if volume == 0:
+            self._show_toast("Volume staat op 0%; verhoog het eerst", error=True)
+            return
+
         self._premium_test_token += 1
         token = self._premium_test_token
-        self._runtime.speaker.play(
-            str(item.get("sound", "beep")), int(item.get("volume", 70)),
-        )
+        speaker.play(str(item.get("sound", "beep")), volume)
 
         def stop_test() -> None:
-            # Een in de tussentijd gestarte echte wekker mag niet gestopt worden.
-            state = getattr(getattr(self._runtime.ctx.core, "state", None), "value", "")
-            if token == self._premium_test_token and state != "ringing":
-                self._runtime.speaker.stop()
+            # Een inmiddels gestart echt alarm mag niet door de test stoppen.
+            state_now = getattr(getattr(self._runtime.ctx.core, "state", None), "value", "")
+            if token != self._premium_test_token or state_now in {"ringing", "snoozed"}:
+                return
+            fout = getattr(speaker, "last_error", None)
+            speaker.stop()
+            if fout:
+                self._show_toast(f"Geen geluid: {str(fout)[:90]}", error=True)
+            else:
+                self._show_toast("Geluidstest klaar")
 
-        self._root.after(1400, stop_test)
-        self._show_toast("Geluidstest (1,4 seconde)")
+        self._root.after(1800, stop_test)
+        self._show_toast("Geluidstest gestart")
 
     def _on_user_activity(self, event: Any = None) -> str | None:
         if self._premium_detail_kind == "alarm":

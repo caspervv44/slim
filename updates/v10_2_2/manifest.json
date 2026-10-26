@@ -1,0 +1,50 @@
+{
+  "release": "10.2.2",
+  "files": [
+    {
+      "path": "src/wekker/alarm/core.py",
+      "base_sha256_lf": "a93a5aebe916a95624885931d97ce35b11bdec747a7c16f2f792ba4ef7613310",
+      "payload_sha256": "81a3e954b84cb4ee036a08619b0e9d8fe1c77424a1e3b6d401e811dedab8065f"
+    },
+    {
+      "path": "src/wekker/gui/app.py",
+      "base_sha256_lf": "15094391609038114fa040fc3d0ecba13ec9240b009e01ae23b37acd530ea2be",
+      "payload_sha256": "e49ea66dd372fc2ecde6980130daeba8686f64d772a26ec8b015339dd7283fc6"
+    },
+    {
+      "path": "src/wekker/gui/premium.py",
+      "base_sha256_lf": "49a70191bd76394bfa50065be2f678af0cd1cd0255c1b70a9e1a312098306a42",
+      "payload_sha256": "5302898b1c3d05aa5d4f4f8a3a27d5f0bf7a0372956311784c69030bdb502b2c"
+    },
+    {
+      "path": "src/wekker/gui/premium_render.py",
+      "base_sha256_lf": "9939f1b7bd58134c0c2e0a4d4ec4638be7c42ca3c2dbb303bfdba78207ef3230",
+      "payload_sha256": "5469575567905c4dd757e72b9dce24348e1576a5d337fd995223e9d38c211478"
+    },
+    {
+      "path": "src/wekker/hardware/audio.py",
+      "base_sha256_lf": "7e7b3e92b6d9045a4ce63f71905c1cbb856b65adc232295772f98dd4b72b9731",
+      "payload_sha256": "00c6f083249667ba772370bc23b39b66f9b0b2d1b2d5ba5868fee122778180e3"
+    },
+    {
+      "path": "src/wekker/api/server.py",
+      "base_sha256_lf": "fb0a6ace312078d8374ff660221b66a2366b91dba3aecd9a646f2a841eaa4910",
+      "payload_sha256": "511302d5a85ed5d034ab419091eed80d071493975d49deb739269e264ef959ba"
+    },
+    {
+      "path": "src/wekker/__init__.py",
+      "base_sha256_lf": "7b4c900f54d9a03cb1f1da97a00ac7e019d7a5e7b4897a0b689faff3e9a04d3c",
+      "payload_sha256": "b70e0c86ae46fb8d0adff8883cd06c6798cde66c4eb7244f8e278024588fde28"
+    },
+    {
+      "path": "tests/test_premium_render.py",
+      "base_sha256_lf": "03af7feed9a29a7c08c55fad403ff1916b43bb7d7f7730e0ad1f5e86467a127c",
+      "payload_sha256": "8225a1f1da0bda1f2538eb6f1409755ee6e853e2a48a0c0b073e210a16441164"
+    },
+    {
+      "path": "tests/test_premium_v102_visual.py",
+      "base_sha256_lf": "0d44949ee4771b9757d438279346bb13bb7586e8717c74ee846af6dd53efb0c7",
+      "payload_sha256": "96095f0902174642957a84b36479947f80676fabc94752280b4d71e280291f80"
+    }
+  ]
+}
