@@ -12,13 +12,14 @@ PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT / "src"))
 
 from wekker.hardware.audio import AplaySpeaker, make_speaker
+from wekker.alarm.sounds import ALARM_SOUND_IDS
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Test de WakeSync-alarmuitgang op de Pi")
     parser.add_argument("--seconds", type=float, default=3.0)
     parser.add_argument("--volume", type=int, default=65)
-    parser.add_argument("--sound", choices=["beep", "classic", "soft", "digital"], default="beep")
+    parser.add_argument("--sound", choices=ALARM_SOUND_IDS, default="beep")
     parser.add_argument(
         "--device", default=None,
         help="Optioneel ALSA-apparaat, bijvoorbeeld plughw:CARD=Device,DEV=0",

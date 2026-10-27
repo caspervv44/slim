@@ -1,0 +1,45 @@
+{
+  "release": "10.2.3",
+  "files": [
+    {
+      "path": "src/wekker/__init__.py",
+      "base_sha256_lf": "b70e0c86ae46fb8d0adff8883cd06c6798cde66c4eb7244f8e278024588fde28",
+      "payload_sha256": "4eace52a68905bb01ebed3b8e61320259b576f273b2b1dc8806272515830cdd1"
+    },
+    {
+      "path": "src/wekker/gui/app.py",
+      "base_sha256_lf": "e49ea66dd372fc2ecde6980130daeba8686f64d772a26ec8b015339dd7283fc6",
+      "payload_sha256": "372a87be4a90ac598ec792d08c2b525c4f294e67a4a4ba9dcb85fd67fb9a86ee"
+    },
+    {
+      "path": "src/wekker/gui/premium.py",
+      "base_sha256_lf": "5302898b1c3d05aa5d4f4f8a3a27d5f0bf7a0372956311784c69030bdb502b2c",
+      "payload_sha256": "c7ad3d31b754bc679e0fc4dd1c8aa9166312882fd5c01aad51453e51789fcfeb"
+    },
+    {
+      "path": "src/wekker/gui/premium_render.py",
+      "base_sha256_lf": "5469575567905c4dd757e72b9dce24348e1576a5d337fd995223e9d38c211478",
+      "payload_sha256": "a7f781ba22341b8f09b13149ad68a652c611b5663955e4098a30271e3937d956"
+    },
+    {
+      "path": "src/wekker/hardware/audio.py",
+      "base_sha256_lf": "00c6f083249667ba772370bc23b39b66f9b0b2d1b2d5ba5868fee122778180e3",
+      "payload_sha256": "85f5ef9cf32f9d77bc96a0020dfb63a6b3f55ca50f86e1fb6856ff9996a44944"
+    },
+    {
+      "path": "tools/test_wakesync_alarm_audio.py",
+      "base_sha256_lf": "f0156c56a9ac8baa8dbfbcfa6cacea44daa2badd5a60fcdf209a10e6f677394d",
+      "payload_sha256": "60306b71df0f4fd0a4e75eb121b176259d2273577994d3db02e8ab2b6bd685da"
+    },
+    {
+      "path": "src/wekker/alarm/sounds.py",
+      "base_sha256_lf": null,
+      "payload_sha256": "71d5a395e254b15f0d24798ec4ebd0b6349f8eb20a6f78f6aefb0d08f07d1f33"
+    },
+    {
+      "path": "src/wekker/hardware/tone_patterns.py",
+      "base_sha256_lf": null,
+      "payload_sha256": "3b9938208511dcc0bfb5502c23194416192530f8a226ee4b350ffc0c4df90b2f"
+    }
+  ]
+}

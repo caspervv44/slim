@@ -31,6 +31,13 @@ def maak_wav(sound: str, volume: int) -> bytes:
     if not isinstance(volume, int) or isinstance(volume, bool) or not 0 <= volume <= 100:
         raise ValueError("Volume moet een getal tussen 0 en 100 zijn")
 
+    # De vier vertrouwde geluiden blijven exact gelijk. Extra melodieën zijn
+    # synthetisch en gebruiken dezelfde werkende ALSA/USB-audioketen.
+    from wekker.hardware.tone_patterns import maak_melodie_wav
+    from wekker.alarm.sounds import ALARM_SOUND_IDS
+    if sound in ALARM_SOUND_IDS and sound not in {"beep", "classic", "soft", "digital"}:
+        return maak_melodie_wav(sound, volume)
+
     presets = {
         "beep": (740.0, 0.24, 0.10),
         "classic": (660.0, 0.18, 0.11),

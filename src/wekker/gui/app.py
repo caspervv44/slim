@@ -19,6 +19,8 @@ import threading
 import time
 from typing import Any
 
+from wekker.alarm.sounds import ALARM_SOUNDS, ALARM_SOUND_IDS, sound_label
+
 from wekker.gui.screens import (
     SCREEN_HEIGHT,
     SCREEN_WIDTH,
@@ -291,6 +293,8 @@ class TouchApp:
         self._alarm_selected_id: str | None = None
         self._alarm_list_page = 0
         self._alarm_creator_overlay: Any | None = None
+        self._alarm_sound_overlay: Any | None = None
+        self._sound_preview_token = 0
         self._alarm_creator_mode = "date"
         self._alarm_pending_date: str | None = None
         self._alarm_calendar_month: date | None = None
@@ -1145,6 +1149,7 @@ class TouchApp:
                 str(item.get("day_label")),
                 int(item.get("snooze_minutes", 9)),
                 int(item.get("volume", 70)),
+                str(item.get("sound", "beep")),
                 bool(item.get("speaker_enabled", True)),
                 bool(item.get("lamp_blink", True)),
                 int(item.get("lamp_brightness", 100)),
@@ -1205,6 +1210,16 @@ class TouchApp:
             ),
         ).pack(side="right", padx=5)
 
+        geluid_row = row("Geluid")
+        tk.Button(
+            geluid_row,
+            text=f'{sound_label(str(item.get("sound", "beep")))}  ›',
+            font=("DejaVu Sans", 9, "bold"),
+            fg=TEXT, bg=CARD_ALT, activebackground=ACCENT_DARK,
+            bd=0, padx=8,
+            command=lambda: self._show_alarm_sound_picker(alarm_id),
+        ).pack(side="right", padx=5, pady=2)
+
         volume_row = row("Volume")
         tk.Label(
             volume_row,
@@ -1247,6 +1262,115 @@ class TouchApp:
             activeforeground=DANGER, bd=0,
             command=lambda: self._delete_alarm_profile(alarm_id),
         ).pack(side="right")
+
+    def _preview_alarm_sound(self, alarm_id: str, sound_id: str) -> None:
+        """Speel een korte voorbeeldklank zonder echte alarmen te beïnvloeden."""
+        from wekker.hardware.mock import MockSpeaker
+
+        if sound_id not in ALARM_SOUND_IDS:
+            self._show_toast("Onbekend alarmgeluid", error=True)
+            return
+        core = self._runtime.ctx.core
+        state = getattr(getattr(core, "state", None), "value", "")
+        if state in {"ringing", "snoozed"}:
+            self._show_toast("Alarm actief; stop het alarm eerst")
+            return
+        item = self._alarm_item(alarm_id)
+        if item is None:
+            return
+        speaker = self._runtime.speaker
+        if isinstance(speaker, MockSpeaker):
+            self._show_toast("Geen audio: nepspeaker actief", error=True)
+            return
+        volume = int(item.get("volume", 70))
+        if volume <= 0:
+            self._show_toast("Volume staat op 0%. Verhoog eerst het volume.", error=True)
+            return
+
+        # Elke volgende proef maakt de vorige stop-timer ongeldig. Zo kan
+        # een oude timer geen net gekozen voorbeeldgeluid afbreken.
+        self._sound_preview_token += 1
+        token = self._sound_preview_token
+        try:
+            speaker.play(sound_id, volume)
+        except Exception as exc:
+            log.exception("Voorbeeldgeluid starten mislukt")
+            self._show_toast(f"Geluid mislukt: {str(exc)[:75]}", error=True)
+            return
+
+        self._show_toast(f"Luisteren: {sound_label(sound_id)}")
+
+        def stop_proef() -> None:
+            state_now = getattr(getattr(core, "state", None), "value", "")
+            if token != self._sound_preview_token or state_now in {"ringing", "snoozed"}:
+                return
+            fout = getattr(speaker, "last_error", None)
+            speaker.stop()
+            if fout:
+                self._show_toast(f"Geen geluid: {str(fout)[:80]}", error=True)
+
+        self._root.after(2700, stop_proef)
+
+    def _show_alarm_sound_picker(self, alarm_id: str) -> None:
+        """Ook de klassieke Tk-interface krijgt een 15-keuze touchscreenpaneel."""
+        item = self._alarm_item(alarm_id)
+        if item is None:
+            return
+        self._close_alarm_sound_picker()
+        tk = self._tk()
+        overlay = tk.Frame(self._root, bg=BG)
+        overlay.place(x=0, y=0, width=SCREEN_WIDTH, height=SCREEN_HEIGHT)
+        overlay.lift()
+        self._alarm_sound_overlay = overlay
+
+        tk.Label(
+            overlay, text="Kies alarmgeluid", font=("DejaVu Sans", 19, "bold"),
+            fg=TEXT, bg=BG,
+        ).place(x=163, y=15, width=475, height=37)
+        tk.Label(
+            overlay, text="Kies links · ▶ is alleen beluisteren",
+            font=("DejaVu Sans", 10), fg=MUTED, bg=BG,
+        ).place(x=163, y=51, width=475, height=24)
+        tk.Button(
+            overlay, text="‹ Terug", font=("DejaVu Sans", 12, "bold"),
+            fg=TEXT, bg=CARD_ALT, bd=0,
+            command=self._close_alarm_sound_picker,
+        ).place(x=20, y=22, width=124, height=47)
+
+        for index, preset in enumerate(ALARM_SOUNDS):
+            col, rij = index % 3, index // 3
+            x, y = 20 + col * 260, 98 + rij * 69
+            kleur = ACCENT_DARK if item.get("sound") == preset.key else CARD_ALT
+            entry = tk.Frame(overlay, bg=kleur)
+            entry.place(x=x, y=y, width=244, height=61)
+            tk.Button(
+                entry,
+                text=f"{preset.label}\\n{preset.beschrijving}",
+                font=("DejaVu Sans", 10, "bold"),
+                justify="left", anchor="w", padx=10,
+                fg=TEXT, bg=kleur, bd=0, wraplength=175,
+                command=lambda key=preset.key: (
+                    self._close_alarm_sound_picker()
+                    if self._save_alarm_profile_patch(
+                        alarm_id, {"sound": key},
+                        toast=f"Geluid opgeslagen: {sound_label(key)}",
+                    ) else None
+                ),
+            ).place(x=0, y=0, width=186, height=61)
+            tk.Button(
+                entry, text="▶", font=("DejaVu Sans", 16, "bold"),
+                fg=ACCENT, bg=CARD, bd=0,
+                command=lambda key=preset.key: self._preview_alarm_sound(alarm_id, key),
+            ).place(x=188, y=0, width=56, height=61)
+
+    def _close_alarm_sound_picker(self) -> None:
+        overlay = self._alarm_sound_overlay
+        self._alarm_sound_overlay = None
+        if overlay is not None:
+            try:
+                overlay.destroy()
+            except Exception:
+                log.debug("Geluidkeuzevenster kon niet sluiten", exc_info=True)
 
     def _change_alarm_page(self, delta: int) -> None:
         items = self._data().alarm.items
@@ -1697,6 +1821,7 @@ class TouchApp:
                 str(item.get("day_label")),
                 int(item.get("snooze_minutes", 9)),
                 int(item.get("volume", 70)),
+                str(item.get("sound", "beep")),
                 bool(item.get("speaker_enabled", True)),
                 bool(item.get("lamp_blink", True)),
                 int(item.get("lamp_brightness", 100)),
@@ -2596,6 +2721,7 @@ class TouchApp:
                 self._qr_overlay is not None,
                 self._settings_overlay is not None,
                 self._alarm_creator_overlay is not None,
+                self._alarm_sound_overlay is not None,
             )):
                 return "break"
             self._last_activity = time.monotonic()
@@ -2621,6 +2747,9 @@ class TouchApp:
             self._qr_overlay is not None,
             self._settings_overlay is not None,
             self._alarm_overlay is not None,
+            self._alarm_creator_overlay is not None,
+            self._alarm_sound_overlay is not None,
+            getattr(self, "_premium_details_overlay", None) is not None,
         )):
             self._last_activity = time.monotonic()
             if self._sleeping:

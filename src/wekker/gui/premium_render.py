@@ -1,4 +1,4 @@
-"""WakeSync Premium 10.2.2: grotere bediening, dezelfde vier ontwerpen.
+"""WakeSync Premium 10.2.3: grotere bediening, dezelfde vier ontwerpen.
 
 Dit bestand heeft geen afhankelijkheid van de wekkerlogica. Het tekent uitsluitend
 een afbeelding van het bestaande schermmodel. Alle acties worden elders
@@ -14,6 +14,8 @@ import math
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
+
+from wekker.alarm.sounds import ALARM_SOUNDS, sound_label
 
 WIDTH, HEIGHT = 800, 480
 SCALE = 2
@@ -754,7 +756,7 @@ def render_detail_screen(
                bg=p.pal.card, fg="#F38A92" if p.pal.dark else "#BA3039")
         p.hit(42, 402, 228, 46, "alarm-delete")
 
-        sound = str(item.get("sound", "beep")).capitalize()
+        sound = sound_label(str(item.get("sound", "beep")))
         _detail_setting(p, 307, 82, 227, "Snooze",
                         f'{int(item.get("snooze_minutes", 9))} minuten',
                         "clock", "alarm-snooze")
@@ -857,3 +859,36 @@ def render_sleep_screen(
     d.text((xy(400),xy(457)), "Tik op het scherm om te openen",
            font=_font(9), fill=(225,238,252,177), anchor="mm")
     return image.convert("RGB").resize((WIDTH,HEIGHT),Image.Resampling.LANCZOS)
+
+
+def render_sound_picker(
+    theme: str, asset_dir: Path, selected: str,
+) -> tuple[Image.Image, list[HitTarget]]:
+    """Toon alle 15 geluiden als ruime, afzonderlijk aanklikbare keuzekaarten.
+
+    Links kiezen en opslaan; de rechter ▶ luistert alleen en slaat niets op.
+    Het volledige scherm past in de vaste 800×480-touchresolutie.
+    """
+    p = Painter(theme, asset_dir, logo_path=None)
+    _detail_top(p, "Kies alarmgeluid", "Tik links om op te slaan · ▶ om te luisteren")
+    for i, sound in enumerate(ALARM_SOUNDS):
+        col, rij = i % 3, i // 3
+        x = 20 + col * 260
+        y = 98 + rij * 69
+        w, h = 244, 61
+        actief = selected == sound.key
+        p.card(x, y, w, h, active=actief, radius=12)
+        p.text(x + 12, y + 10, sound.label, 13, bold=True,
+               max_width=175, color=p.pal.accent_alt if actief else p.pal.text)
+        p.text(x + 12, y + 35, sound.beschrijving, 10,
+               color=p.pal.muted, max_width=177)
+        if actief:
+            p.circle(x + 192, y + 20, 5, p.pal.success)
+        # De luisterknop heeft een eigen raakvlak van 52×61 pixels.
+        p.line([(x + 188, y + 11), (x + 188, y + 50)], p.pal.border, 1)
+        p.circle(x + 216, y + 30, 18, p.pal.accent, 0, p.pal.accent, 1.6)
+        p.text(x + 216, y + 30, "▶", 15, color=p.pal.accent,
+               bold=True, anchor="mm")
+        p.hit(x, y, 187, h, "sound-select", sound.key)
+        p.hit(x + 188, y, 56, h, "sound-preview", sound.key)
+    return p.finish()

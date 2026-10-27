@@ -1,4 +1,4 @@
-"""WakeSync Premium v10.2.2: vier thema's, detailschermen en rustige slaapstand.
+"""WakeSync Premium v10.2.3: vier thema's, detailschermen en rustige slaapstand.
 
 De bestaande TouchApp blijft verantwoordelijk voor gegevens, acties en alarms.
 De premium-laag verandert uitsluitend de weergave; een Canvas blijft bestaan bij
@@ -15,12 +15,14 @@ from typing import Any
 
 from PIL import Image, ImageEnhance, ImageTk
 
+from wekker.alarm.sounds import ALARM_SOUND_IDS, sound_label
 from wekker.gui import app as legacy
 from wekker.gui.premium_render import (
     HitTarget,
     PALETTES,
     THEME_TITLES,
     render_detail_screen,
+    render_sound_picker,
     render_screen,
     render_sleep_screen,
 )
@@ -325,17 +327,23 @@ class PremiumTouchApp(legacy.TouchApp):
         kind = self._premium_detail_kind
         if kind == "display":
             item = None
-        elif kind == "alarm":
+        elif kind in {"alarm", "sound"}:
             item = self._alarm_item(self._alarm_selected_id)
             if item is None:
                 self._premium_close_details()
                 return
         else:
             return
-        image, hits = render_detail_screen(
-            kind, self._active_theme, self._premium_now(), self._premium_assets,
-            settings=self._runtime.ctx.settings, item=item,
-        )
+        if kind == "sound":
+            image, hits = render_sound_picker(
+                self._active_theme, self._premium_assets,
+                str(item.get("sound", "beep")),
+            )
+        else:
+            image, hits = render_detail_screen(
+                kind, self._active_theme, self._premium_now(), self._premium_assets,
+                settings=self._runtime.ctx.settings, item=item,
+            )
         photo = ImageTk.PhotoImage(image, master=self._root)
         if self._premium_detail_item is None:
             self._premium_detail_item = canvas.create_image(
@@ -383,8 +391,24 @@ class PremiumTouchApp(legacy.TouchApp):
             if action == "close-detail":
                 if self._premium_detail_kind == "display":
                     self._close_settings_section()
+                elif self._premium_detail_kind == "sound":
+                    self._premium_detail_kind = "alarm"
+                    self._premium_redraw_detail()
                 else:
                     self._premium_close_details()
+                return "break"
+            if self._premium_detail_kind == "sound":
+                alarm_id = self._alarm_selected_id
+                if not alarm_id or value not in ALARM_SOUND_IDS:
+                    return "break"
+                if action == "sound-preview":
+                    self._preview_alarm_sound(alarm_id, value)
+                elif action == "sound-select":
+                    self._save_alarm_profile_patch(
+                        alarm_id, {"sound": value},
+                        toast=f"Geluid opgeslagen: {sound_label(value)}",
+                    )
+                    self._premium_redraw_detail()
                 return "break"
             if action == "preview-sleep":
                 self._close_settings_section()
@@ -448,7 +472,8 @@ class PremiumTouchApp(legacy.TouchApp):
         elif action == "alarm-snooze":
             self._cycle_alarm_profile_value(alarm_id, "snooze_minutes", [5, 9, 10, 15, 20, 30])
         elif action == "alarm-sound":
-            self._cycle_alarm_profile_value(alarm_id, "sound", ["beep", "classic", "soft", "digital"])
+            self._premium_detail_kind = "sound"
+            self._premium_redraw_detail()
         elif action == "alarm-volume":
             self._adjust_alarm_profile_value(alarm_id, "volume", 10, 0, 100)
         elif action == "alarm-lamp-brightness":
@@ -461,42 +486,10 @@ class PremiumTouchApp(legacy.TouchApp):
             self._premium_test_audio(alarm_id)
 
     def _premium_test_audio(self, alarm_id: str) -> None:
-        state = getattr(getattr(self._runtime.ctx.core, "state", None), "value", "")
-        if state in {"ringing", "snoozed"}:
-            self._show_toast("Alarm actief; eerst stoppen via het scherm")
-            return
+        """Luister naar het opgeslagen geluid via dezelfde USB-ALSA-speaker."""
         item = self._alarm_item(alarm_id)
-        if item is None:
-            return
-        from wekker.hardware.mock import MockSpeaker
-
-        speaker = self._runtime.speaker
-        if isinstance(speaker, MockSpeaker):
-            self._show_toast("Geen audio: de nepspeaker is actief", error=True)
-            return
-        volume = int(item.get("volume", 70))
-        if volume == 0:
-            self._show_toast("Volume staat op 0%; verhoog het eerst", error=True)
-            return
-
-        self._premium_test_token += 1
-        token = self._premium_test_token
-        speaker.play(str(item.get("sound", "beep")), volume)
-
-        def stop_test() -> None:
-            # Een inmiddels gestart echt alarm mag niet door de test stoppen.
-            state_now = getattr(getattr(self._runtime.ctx.core, "state", None), "value", "")
-            if token != self._premium_test_token or state_now in {"ringing", "snoozed"}:
-                return
-            fout = getattr(speaker, "last_error", None)
-            speaker.stop()
-            if fout:
-                self._show_toast(f"Geen geluid: {str(fout)[:90]}", error=True)
-            else:
-                self._show_toast("Geluidstest klaar")
-
-        self._root.after(1800, stop_test)
-        self._show_toast("Geluidstest gestart")
+        if item is not None:
+            self._preview_alarm_sound(alarm_id, str(item.get("sound", "beep")))
 
     def _on_user_activity(self, event: Any = None) -> str | None:
         if self._premium_detail_kind == "alarm":
